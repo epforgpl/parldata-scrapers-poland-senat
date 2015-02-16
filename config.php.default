@@ -1,0 +1,13 @@
+<?php
+
+// https://github.com/epforgpl/parsers-senat
+define('SENAT_PARSER_DIR','../parsers-senat');
+
+define('SCRAPER_USER', 'scraper');
+define('SCRAPER_PASSWORD', '');
+
+define('API_ENDPOINT', 'https://api.parldata.eu/pl/senat');
+
+define('DEBUG', false);
+define('CACHE_ENABLED', false);
+define('SKIP_CRT_VALIDATION', false);
