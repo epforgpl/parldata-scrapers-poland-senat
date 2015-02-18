@@ -3,7 +3,9 @@
 require_once('config.php');
 require('ParldataAPI.php');
 
-require(join(DIRECTORY_SEPARATOR, array(SENAT_PARSER_DIR, 'lib', 'SenatParser.class.php')));
+require(SENAT_PARSER_DIR . 'SenatParser.php');
+
+use parldata\parsers\ParserException;
 
 # An hour should be enough
 set_time_limit(3600);
@@ -13,9 +15,12 @@ $updater = new SenatUpdater();
 $updater->run(array_slice($argv, 1));
 
 class SenatUpdater {
+    private $org_classification_klub = 'klub';
+    private $org_classification_komisja = 'komisja';
+
     function __construct() {
         $this->api = new parldata\API(API_ENDPOINT, SCRAPER_USER, SCRAPER_PASSWORD, 'ParlDataPHPApi/1.0 SenatParser/1.2');
-        $this->parser = new SenatParser();
+        $this->parser = new parldata\parsers\Senat();
     }
 
     private function mapPerson($web) {
@@ -27,11 +32,15 @@ class SenatUpdater {
         );
 
         $names = preg_split("/\s+/", $web['name']);
-        if (count($names) != 2) {
+        if (count($names) > 3) {
             $this->warn("Multi-part name: " . $web['name']);
         }
         $person['family_name'] = array_pop($names);
-        $person['given_name'] = join(' ', $names);
+        $person['given_name'] = array_shift($names);
+
+        if (!empty($names)) {
+            $person['additional_name'] = $names[0];
+        }
 
         return $person;
     }
@@ -64,13 +73,6 @@ class SenatUpdater {
             $person['contact_details'] = $contact_details;
         }
 
-
-//        'cadencies'=>$this->_senatorExtractCadencies($html),
-//            'clubs'=>$this->_senatorExtractClubs($html),
-//            'commissions'=>$this->_senatorExtractCommissions($html),
-//            'parliamentary_assemblies'=>$this->_senatorExtractParlimentaryAssemblies($html),
-//            'senat_assemblies'=>$this->_senatorExtractSenatAssemblies($html),
-
         return $person;
     }
 
@@ -96,6 +98,23 @@ class SenatUpdater {
         $this->api->createLog($log);
 
         try {
+            $terms = $this->parser->getTermsOfOffice();
+            if ($terms[0]['id'] == 'VII') {
+                // add current term
+                array_unshift($terms, array(
+                    'id' => 'VIII',
+                    'start_date' => '2011-10-09',
+                    'source' => 'http://www.senat.gov.pl/o-senacie/senat-wspolczesny/dane-o-senatorach-wg-stanu-na-dzien-wyborow/'
+                ));
+
+                $this->current_chamber = 'chamber_' . $terms[0]['id'];
+                $this->ensureChambersCreated($terms);
+
+            } else {
+                // TODO maybe automatic term_id increment and setting dates
+                throw new Exception('New term of office has arrived! Please fill info about the current');
+            }
+
             $this->{$job}();
 
             $log['status'] = 'finished';
@@ -104,10 +123,12 @@ class SenatUpdater {
         } catch (Exception $ex) {
             $log['params'] = array_merge(has_key($log, 'params') ? $log['params'] : array(), array(
                 'error_type' => get_class($ex),
-                'error_message' => (string)$ex
+                'error_message' => $ex->getMessage()
             ));
             $log['status'] = 'failed';
             $this->api->createLog($log);
+
+            // TODO error log without throwing?
 
             throw $ex;
         }
@@ -125,20 +146,123 @@ class SenatUpdater {
         foreach ($list as $id => $data) {
             if (has_key($data, 'web')) {
                 if (!has_key($data, 'api')) {
+                    // add new person
                     $person = self::mapPerson($data['web']);
                     $this->api->createPerson($person);
                 }
-            } else if (has_key($data, 'api')) {
-                // TODO delete Senat - senator membership
             }
         }
     }
 
     function updateSenators() {
         foreach ($this->api->findPeople(array('all' => true))->_items as $a) {
-            $web = $this->parser->updateSenatorInfo($a->id);
-            $person = self::mapPersonInfo($web);
-            $this->api->updatePerson($a->id, $person, false);
+            $id_senator = $a->id;
+
+            // TODO Nieznana data urodzin:
+            $person_data = $this->parser->updateSenatorInfo($id_senator);
+            $person = self::mapPersonInfo($person_data);
+            $this->api->updatePerson($id_senator, $person);
+
+            // Download and map all memberships
+            $person = $this->api->getPerson($id_senator, array('embed' => array('memberships.person')));
+
+            $existing_memberships = array();
+            if (isset($person->memberships)) {
+                foreach($person->memberships as $m) {
+                    $m->_found = false;
+                    $existing_memberships[$m->id] = $m;
+                }
+            }
+
+            // Kadencje - terms of office
+            foreach($person_data['cadencies'] as $wterm) {
+                $id_chamber = 'chamber_' . strtoupper(($wterm));
+
+                // memberships
+                $membership_id = $id_chamber . '-' .$id_senator;
+
+                if (has_key($existing_memberships, $membership_id)) {
+                    $existing_memberships[$membership_id]->_found = true;
+
+                    if (!empty($person_data['mandate_end_date'])
+                        and empty($existing_memberships[$membership_id]->end_date)
+                        and $id_chamber == $this->current_chamber) {
+
+                        $this->api->update('memberships', $membership_id,
+                            array('end_date' => $person_data['mandate_end_date']));
+                    }
+
+                } else {
+                    // create membership
+                    $membership = (object) array(
+                        'id' => $membership_id,
+                        'person_id' => $id_senator,
+                        'organization_id' => $id_chamber,
+                    );
+                    if (defined('FIRST_PASS') and !FIRST_PASS) {
+                        // we can assume that if there's new connection it happened today
+                        $membership->start_date = $this->today();
+                    }
+
+                    $this->api->createMembership($membership);
+                }
+            }
+
+            // Kluby - senat clubs
+            foreach ($person_data['clubs'] as $club) {
+                $id_klub = $this->org_classification_klub . '_' . $club['id'];
+
+                // check if club exists
+                try {
+                    // TODO optimize, get 'get' out of here
+                    $this->api->getOrganization($id_klub);
+
+                } catch(parldata\NotFoundException $ex) {
+                    $org = array(
+                        'id' => $id_klub,
+                        'name' => $club['name'],
+                        'classification' => $this->org_classification_klub,
+                        'sources' => array(array(
+                            'url' => $club['url']
+                        ))
+                    );
+                    $this->api->createOrganization($org);
+                }
+
+                // memberships
+                $membership_id = $id_klub . '-' .$id_senator;
+
+                if (has_key($existing_memberships, $membership_id)) {
+                    $existing_memberships[$membership_id]->_found = true;
+
+                } else {
+                    // create membership
+                    $membership = (object) array(
+                        'id' => $membership_id,
+                        'person_id' => $id_senator,
+                        'organization_id' => $id_klub,
+                    );
+                    if (defined('FIRST_PASS') and !FIRST_PASS) {
+                        // we can assume that if there's new connection it happened today
+                        $membership->start_date = $this->today();
+                    }
+
+                    $this->api->createMembership($membership);
+                }
+            }
+
+//        'cadencies'=>$this->_senatorExtractCadencies($html),
+//            'commissions'=>$this->_senatorExtractCommissions($html),
+//            'senat_assemblies'=>$this->_senatorExtractSenatAssemblies($html),
+
+            // delete old memberships
+            foreach($existing_memberships as $m) {
+                if (! $m->_found) {
+                    $this->api->updateMembership($m->id, array(
+                        'end_date' => $this->today()
+                    ));
+                }
+            }
         }
     }
 
@@ -155,6 +279,40 @@ class SenatUpdater {
 
     private function senator_url($id) {
         return 'http://senat.gov.pl/sklad/senatorowie/senator,' . $id . '.html';
+    }
+
+    private function today() {
+        $date = new DateTime();
+        return $date->format('Y-m-d');
+    }
+
+    private function ensureChambersCreated($terms) {
+        $chambers = array();
+        foreach($this->api->find('organizations', array('where' => array('classification' => 'chamber')))->_items as $chamber) {
+            $chambers[$chamber->id] = $chamber;
+        }
+
+        foreach($terms as $term) {
+            $chamber_id = 'chamber_' . $term['id'];
+            if (!has_key($chambers, $chamber_id)
+                or (isset($term['end_date']) and $chambers[$chamber_id]->dissolution_date != $term['end_date'])) {
+
+                $org = array(
+                    'id' => $chamber_id,
+                    'name' => 'Senat - kadencja ' . $term['id'],
+                    'classification' => 'chamber',
+                    'founding_date' => $term['start_date'],
+                    'sources' => array(array(
+                        'url' => $term['source']
+                    ))
+                );
+                if (has_key($term, 'end_date')) {
+                    $org['dissolution_date'] = $term['end_date'];
+                }
+
+                $this->api->createOrganization($org);
+            }
+        }
     }
 }
 

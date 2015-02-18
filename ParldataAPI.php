@@ -2,18 +2,35 @@
 
 namespace parldata;
 
-class ValidationException extends \Exception {
-    public function __construct($issues) {
-        $this->issues = $issues;
-    }
-
-    public function __toString() {
-        return "ValidationException: " . json_encode($this->issues);
+class ApiException extends \Exception {
+    public function __construct($result) {
+        parent::__construct($result->_error->message, $result->_error->code);
+        $this->result = $result;
     }
 }
 
-class NetworkException extends \Exception {
+class ValidationException extends ApiException {
+    public function __construct($result) {
+        parent::__construct($result);
 
+        $this->issues = $result->_issues;
+        $this->message = "Validation errors: " . json_encode($this->issues);
+    }
+}
+
+class NetworkException extends ApiException {
+    public function __construct($message) {
+        $this->message = $message;
+    }
+}
+
+class NotFoundException extends ApiException {
+    public function __construct($result, $url) {
+        parent::__construct($result);
+        $this->message = "Not Found: " . $url;
+
+        $this->url = $url;
+    }
 }
 
 class API {
@@ -30,22 +47,24 @@ class API {
         $this->_post($this->endpoint . $type, $data);
     }
 
-    public function get($type, $id) {
-        $this->debug("   [GET] " . $type . " " . $id);
+    public function get($type, $id, $options = array()) {
+        $this->debug("   [GET] " . $type . " " . $id . ' ' . json_encode($options));
+
+        return $this->_get($this->endpoint . $type . '/' . $id, $options);
     }
 
     public function delete($type, $id) {
         $this->debug("[DELETE] " . $type . " " . $id);
     }
 
-    public function update($type, $id, $data, $replaceObject = true) {
-        $this->debug("[UPDATE] " . $type . " " . $id . " " . json_encode($data));
+    public function update($type, $id, $data, $replaceObject = false) {
+        $this->debug("[UPDATE] " . $type . " " . $id . ($replaceObject ? ' PUT ' : ' PATCH ') . json_encode($data));
 
         $this->_post($this->endpoint . $type . '/' . $id, $data, $replaceObject ? 'PUT' : 'PATCH');
     }
 
     public function find($type, $options = array()) {
-        $this->debug("  [FIND] " . $type . (empty($options) ? '' : '?' . \http_build_query($options)));
+        $this->debug("  [FIND] " . $type . (empty($options) ? '' : ' ' . json_encode($options)));
 
         $fetch_all = has_key($options, 'all') ? $options['all'] : false;
         if ($fetch_all) {
@@ -54,12 +73,7 @@ class API {
             $options['max_results'] = 50;
         }
 
-        $query = '';
-        if (!empty($options)) {
-            $query = '?' . \http_build_query($options);
-        }
-
-        $result = $this->_get($this->endpoint . $type . $query);
+        $result = $this->_get($this->endpoint . $type, $options);
 
         if ($fetch_all) {
             $part = $result;
@@ -78,7 +92,7 @@ class API {
 
     // ==================================================
 
-    public function updatePerson($id, $person, $replaceObject = true) {
+    public function updatePerson($id, $person, $replaceObject = false) {
         $this->update('people', $id, $person, $replaceObject);
     }
 
@@ -90,8 +104,28 @@ class API {
         return $this->create('people', $person);
     }
 
+    public function createMembership($membership) {
+        return $this->create('memberships', $membership);
+    }
+
     public function createLog($log) {
         $this->create('logs', $log);
+    }
+
+    public function createOrganization($org) {
+        return $this->create('organizations', $org);
+    }
+
+    public function getOrganization($id, $options = array()) {
+        return $this->get('organizations', $id, $options);
+    }
+
+    public function getPerson($id, $options = array()) {
+        return $this->get('people', $id, $options);
+    }
+
+    public function getMembership($id, $options = array()) {
+        return $this->get('memberships', $id, $options);
     }
 
     // ====================================================
@@ -104,7 +138,7 @@ class API {
      * @param array $options for cURL
      * @return string
      */
-    private function _post($url, array $data = array(), $method = 'POST') {
+    private function _post($url, $data = array(), $method = 'POST') {
         $options = array(
             //CURLOPT_POST => 1,
             CURLOPT_CUSTOMREQUEST => $method,
@@ -136,7 +170,12 @@ class API {
         $result = json_decode($result);
 
         if ($result->_status == 'ERR') {
-            throw new ValidationException($result->_issues);
+            if (isset($result->_issues)) {
+                throw new ValidationException($result);
+
+            } else {
+                throw new ApiException($result);
+            }
         }
 
         if ($result->id) {
@@ -151,9 +190,22 @@ class API {
      * @param array $options for cURL
      * @return string
      */
-    private function _get($url, array $get = array(), array $options = array()) {
+    private function _get($url, array $options = array()) {
+        $query = '';
+        if (!empty($options)) {
+            $query = '?';
+
+            $i = 0;
+            foreach($options as $opt => $value) {
+                $query .= ($i > 0 ? '&' : '') . $opt . '=' . json_encode($value);
+                $i++;
+            }
+        }
+
+        $url .= $query;
+
         $defaults = array(
-            CURLOPT_URL => $url . (strpos($url, '?') === FALSE ? '?' : '') . http_build_query($get),
+            CURLOPT_URL => $url,
             CURLOPT_HEADER => 0,
             CURLOPT_SSL_VERIFYPEER => defined('SKIP_CRT_VALIDATION') ? !SKIP_CRT_VALIDATION : true,
             CURLOPT_RETURNTRANSFER => TRUE,
@@ -162,7 +214,7 @@ class API {
         );
 
         $ch = curl_init();
-        curl_setopt_array($ch, ($options + $defaults));
+        curl_setopt_array($ch, $defaults);
         if (!$result = curl_exec($ch)) {
             $curl_error = curl_error($ch);
             curl_close($ch);
@@ -173,6 +225,14 @@ class API {
         curl_close($ch);
 
         $result = json_decode($result);
+
+        if (isset($result->_status) and $result->_status == 'ERR') {
+            if ($result->_error->code == 404) {
+                throw new NotFoundException($result, $url);
+            }
+            throw new ApiException($result);
+        }
+
         return $result;
     }
 

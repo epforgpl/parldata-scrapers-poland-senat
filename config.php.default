@@ -1,7 +1,7 @@
 <?php
 
 // https://github.com/epforgpl/parsers-senat
-define('SENAT_PARSER_DIR','../parsers-senat');
+define('SENAT_PARSER_DIR','../parsers-senat/'); # include trailing slash!
 
 define('SCRAPER_USER', 'scraper');
 define('SCRAPER_PASSWORD', '');
@@ -11,3 +11,4 @@ define('API_ENDPOINT', 'https://api.parldata.eu/pl/senat');
 define('DEBUG', false);
 define('CACHE_ENABLED', false);
 define('SKIP_CRT_VALIDATION', false);
+define('FIRST_PASS', true); // change to false after first pass :)
