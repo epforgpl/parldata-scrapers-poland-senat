@@ -208,7 +208,14 @@ class SenatUpdater {
             $cache_organizations[$a->id] = $a;
         }
 
-        foreach ($this->api->findPeople(array('all' => true))->_items as $a) {
+        $senators = $this->api->findPeople(array(
+            'all' => true,
+            'where' => array(
+                'identifiers.scheme' => 'senat.gov.pl' // speakers not from Senate don't have this id
+            )
+        ))->_items;
+
+        foreach ($senators as $a) {
             $id_senator = $a->id;
 
             $person_data = $this->parser->updateSenatorInfo($id_senator);
