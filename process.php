@@ -8,16 +8,15 @@
 //$STDOUT = fopen('application.log', 'wb');
 //$STDERR = fopen('error.log', 'wb');
 
+require_once('vendor/autoload.php');
 require_once('config.php');
-require('ParldataAPI.php');
-
-require(SENAT_PARSER_DIR . 'SenatParser.php');
+require_once('ParldataAPI.php');
 
 define('ORG_CLASSIFICATION_ZESPOL_SENACKI', 'friendship group');
 define('ORG_CLASSIFICATION_KLUB', 'parliamentary group');
 define('ORG_CLASSIFICATION_KOMISJA', 'committee');
 
-use parldata\parsers\ParserException;
+use epforgpl\parsers\ParserException;
 
 # An hour should be enough
 set_time_limit(3600);
@@ -34,7 +33,7 @@ class ScraperException extends \Exception {
 class SenatUpdater {
     function __construct() {
         $this->api = new parldata\API(API_ENDPOINT, SCRAPER_USER, SCRAPER_PASSWORD, 'ParlDataPHPApi/1.0 SenatParser/1.2');
-        $this->parser = new parldata\parsers\Senat();
+        $this->parser = new epforgpl\parsers\Senat();
         $this->errors = array();
         $this->current_chamber = null;
         $this->current_chamber_has_senators = false;
@@ -94,6 +93,21 @@ class SenatUpdater {
         return $person;
     }
 
+    function crontab() {
+        $class = new ReflectionClass(get_class($this));
+        $methods = $class->getMethods(ReflectionMethod::IS_PUBLIC);
+        $offset = 0;
+        $step = intval(60 / (count($methods) - 3));
+
+        echo "# sudo php process.php crontab > /etc/cron.d/scrapers-poland-senat\n";
+        foreach($methods as $method) {
+            if (!in_array($method->name, array('__construct', 'crontab', 'run'))) {
+                echo "$offset * * * * root php " . __FILE__ . ' ' . $method->name . "\n";
+                $offset += $step;
+            }
+        }
+    }
+
     function run($args) {
         if (count($args) != 1 || !$args[0]) {
             echo "Updater takes one argument: job_name";
@@ -104,6 +118,10 @@ class SenatUpdater {
 
         if (!method_exists($this, $job)) {
             throw new Exception("Unknown job: " . $job);
+        }
+
+        if ($job == 'crontab') {
+            return $this->crontab();
         }
 
         $log = array(

@@ -1,0 +1,112 @@
+{
+    "_readme": [
+        "This file locks the dependencies of your project to a known state",
+        "Read more about it at http://getcomposer.org/doc/01-basic-usage.md#composer-lock-the-lock-file",
+        "This file is @generated automatically"
+    ],
+    "hash": "b1d44435e495f252934520be1b8a9cec",
+    "packages": [
+        {
+            "name": "epforgpl/parsers-senat",
+            "version": "v0.3.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/epforgpl/parsers-senat.git",
+                "reference": "a00b01b700baa8c70998edaf96e94716714e674f"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/epforgpl/parsers-senat/zipball/a00b01b700baa8c70998edaf96e94716714e674f",
+                "reference": "a00b01b700baa8c70998edaf96e94716714e674f",
+                "shasum": ""
+            },
+            "require": {
+                "gilbitron/php-simplecache": "~1.4"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "epforgpl\\parsers\\": "src/"
+                }
+            },
+            "authors": [
+                {
+                    "name": "Jakub Król",
+                    "email": "j.krol@media30.pl",
+                    "homepage": "http://media30.pl"
+                },
+                {
+                    "name": "Krzysztof Madejski",
+                    "email": "krzysztof.madejski@epf.org.pl",
+                    "homepage": "http://epf.org.pl"
+                }
+            ],
+            "description": "Parsing data from Polish Senat",
+            "homepage": "https://github.com/epforgpl/parsers-senat",
+            "keywords": [
+                "parldata",
+                "parser",
+                "poland",
+                "polish",
+                "scraper",
+                "senat",
+                "senate"
+            ],
+            "support": {
+                "source": "https://github.com/epforgpl/parsers-senat/tree/v0.3.0",
+                "issues": "https://github.com/epforgpl/parsers-senat/issues"
+            },
+            "time": "2015-02-21 21:14:27"
+        },
+        {
+            "name": "gilbitron/php-simplecache",
+            "version": "1.4.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/gilbitron/PHP-SimpleCache.git",
+                "reference": "eb43b12945955428ced0b55d711d57afc6c4c9b3"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/gilbitron/PHP-SimpleCache/zipball/eb43b12945955428ced0b55d711d57afc6c4c9b3",
+                "reference": "eb43b12945955428ced0b55d711d57afc6c4c9b3",
+                "shasum": ""
+            },
+            "require": {
+                "php": ">=5.3.0"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Gilbitron\\Util\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Gilbert Pellegrom",
+                    "email": "gilbert@pellegrom.me",
+                    "homepage": "http://gilbert.pellegrom.me"
+                }
+            ],
+            "description": "A simple script for caching 3rd party API calls in PHP.",
+            "homepage": "https://github.com/gilbitron/PHP-SimpleCache",
+            "keywords": [
+                "cache",
+                "simplecache"
+            ],
+            "time": "2014-07-15 09:37:49"
+        }
+    ],
+    "packages-dev": [],
+    "aliases": [],
+    "minimum-stability": "stable",
+    "stability-flags": [],
+    "prefer-stable": false,
+    "prefer-lowest": false,
+    "platform": [],
+    "platform-dev": []
+}

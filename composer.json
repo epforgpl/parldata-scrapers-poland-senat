@@ -12,12 +12,18 @@
     "parldata",
     "updater"
   ],
-  "homepage": "https://github.com/epforgpl//parldata-scrapers-poland-senat",
+  "homepage": "https://github.com/epforgpl/parldata-scrapers-poland-senat",
   "authors": [
     {
       "name": "Krzysztof Madejski",
       "email": "krzysztof.madejski@epf.org.pl",
       "homepage": "http://epf.org.pl"
+    }
+  ],
+  "repositories": [
+    {
+      "type": "vcs",
+      "url": "https://github.com/epforgpl/parsers-senat.git"
     }
   ],
   "require": {
