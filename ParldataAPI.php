@@ -2,10 +2,16 @@
 
 namespace parldata;
 
+define('MAX_POST_ITEMS', 500);
+
 class ApiException extends \Exception {
-    public function __construct($result) {
+    public function __construct($result, $extra_message = '') {
         parent::__construct($result->_error->message, $result->_error->code);
         $this->result = $result;
+
+        if ($extra_message != '') {
+            $this->message .= $extra_message;
+        }
     }
 }
 
@@ -13,8 +19,14 @@ class ValidationException extends ApiException {
     public function __construct($result) {
         parent::__construct($result);
 
-        $this->issues = $result->_issues;
-        $this->message = "Validation errors: " . json_encode($this->issues);
+        if (isset($result->_issues)) {
+            $this->issues = $result->_issues;
+            $this->message = "Validation errors: " . json_encode($this->issues);
+
+        } else {
+            $this->items = $result->_items;
+            $this->message = "Validation errors: " . json_encode($this->items);
+        }
     }
 }
 
@@ -33,18 +45,57 @@ class NotFoundException extends ApiException {
     }
 }
 
+
 class API {
     public function __construct($endpoint, $user, $password, $useragent = 'ParlDataPHPApi/1.0') {
         $this->endpoint = $endpoint . '/';
         $this->user = $user;
         $this->password = $password;
         $this->useragent = $useragent;
+        $this->changes = array();
     }
 
     public function create($type, $data) {
-        $this->debug("[CREATE] " . $type . " " . json_encode($data));
+        // chunk big inserts
+        if (!is_array_assoc($data) && count($data) > MAX_POST_ITEMS) {
+            $ids = array();
 
-        $this->_post($this->endpoint . $type, $data);
+            for($offset = 0; $offset < count($data); $offset += MAX_POST_ITEMS) {
+                $_ids = $this->create($type, array_slice($data, $offset, MAX_POST_ITEMS));
+                $ids = array_merge($ids, $_ids);
+            }
+
+            return $ids;
+        }
+
+        if (!is_array_assoc($data)) {
+            $this->debug("[CREATE] " . $type);
+            foreach($data as $datum) {
+                $this->debug("\t" . json_encode($datum));
+            };
+
+            $ids = $id = $this->_post($this->endpoint . $type, $data);
+            if (!is_array($id)) {
+                $ids = $id = array($id);
+            }
+
+        } else {
+            $this->debug("[CREATE] " . $type . " " . json_encode($data));
+
+            $id = $this->_post($this->endpoint . $type, $data);
+            $ids = array($id);
+        }
+
+        // save changes
+        foreach($ids as $i) {
+            array_push($this->changes, array(
+                'op' => 'CREATE',
+                'type' => $type,
+                'id' => $i
+            ));
+        }
+
+        return $id;
     }
 
     public function get($type, $id, $options = array()) {
@@ -53,17 +104,36 @@ class API {
         return $this->_get($this->endpoint . $type . '/' . $id, $options);
     }
 
+    public function getOrCreate($type, $where, $object) {
+        $objects = $this->find($type, array('where' => $where))->_items;
+        if (count($objects) > 1) {
+            throw new \Exception("Expected one object, but got " . count($objects) . " using where=" . json_encode($where));
+        }
+        if (count($objects) == 1) {
+            return $objects[0];
+        }
+
+        $id = $this->create($type, $object);
+        $object['id'] = $id;
+
+        return (object) $object;
+    }
+
     public function delete($type, $id) {
         $this->debug("[DELETE] " . $type . " " . $id);
+
+        $this->_post($this->endpoint . $type . '/' . $id, array(), 'DELETE');
     }
 
     public function update($type, $id, $data, $replaceObject = false) {
+        // TODO if data in array show in consecutive rows
         $this->debug("[UPDATE] " . $type . " " . $id . ($replaceObject ? ' PUT ' : ' PATCH ') . json_encode($data));
 
-        $this->_post($this->endpoint . $type . '/' . $id, $data, $replaceObject ? 'PUT' : 'PATCH');
+        return $this->_post($this->endpoint . $type . '/' . $id, $data, $replaceObject ? 'PUT' : 'PATCH');
     }
 
     public function find($type, $options = array()) {
+        // TODO show actual url - move debug to _get
         $this->debug("  [FIND] " . $type . (empty($options) ? '' : ' ' . json_encode($options)));
 
         $fetch_all = has_key($options, 'all') ? $options['all'] : false;
@@ -150,6 +220,7 @@ class API {
             CURLOPT_URL => $url,
             CURLOPT_FRESH_CONNECT => 1,
             CURLOPT_RETURNTRANSFER => 1,
+            CURLOPT_FAILONERROR => false, // so can catch verbose error message from API
             CURLOPT_FORBID_REUSE => 1,
             CURLOPT_TIMEOUT => 4,
             CURLOPT_USERAGENT => $this->useragent,
@@ -157,7 +228,7 @@ class API {
 
         $ch = curl_init();
         curl_setopt_array($ch, $options);
-        if (!$result = curl_exec($ch)) {
+        if (($result = curl_exec($ch)) === false) {
             $curl_error = curl_error($ch);
             curl_close($ch);
 
@@ -169,18 +240,24 @@ class API {
         // Check for validation errors
         $result = json_decode($result);
 
-        if ($result->_status == 'ERR') {
-            if (isset($result->_issues)) {
+        if ($result != null and $result->_status == 'ERR') {
+            if (isset($result->_issues) || isset($result->_items)) {
                 throw new ValidationException($result);
 
             } else {
-                throw new ApiException($result);
+                throw new ApiException($result, " while $method $url");
             }
         }
 
-        if ($result->id) {
+        if (isset($result->id)) {
             return $result->id;
+
+        } else if(isset($result->_items)) {
+            return array_map(function($item) {
+                return $item->id;
+            }, $result->_items);
         }
+        return;
     }
 
     /**
@@ -197,18 +274,22 @@ class API {
 
             $i = 0;
             foreach($options as $opt => $value) {
-                $query .= ($i > 0 ? '&' : '') . $opt . '=' . json_encode($value);
+                $query .= ($i > 0 ? '&' : '') . $opt . '=' . ($opt == 'sort' ? $value : json_encode($value));
                 $i++;
             }
         }
 
         $url .= $query;
 
+        // spaces in strings causes er400; one can use urlencode to be even more safe
+        $url = str_replace(' ', '%20', $url);
+
         $defaults = array(
             CURLOPT_URL => $url,
             CURLOPT_HEADER => 0,
             CURLOPT_SSL_VERIFYPEER => defined('SKIP_CRT_VALIDATION') ? !SKIP_CRT_VALIDATION : true,
             CURLOPT_RETURNTRANSFER => TRUE,
+            CURLOPT_FAILONERROR => true,
             CURLOPT_USERAGENT => $this->useragent,
             CURLOPT_TIMEOUT => 4
         );
@@ -219,7 +300,7 @@ class API {
             $curl_error = curl_error($ch);
             curl_close($ch);
 
-            error_log("[GET " . $url . "] " . json_encode($get));
+            error_log("[GET] " . $url);
             throw new NetworkException($curl_error);
         }
         curl_close($ch);
@@ -230,7 +311,7 @@ class API {
             if ($result->_error->code == 404) {
                 throw new NotFoundException($result, $url);
             }
-            throw new ApiException($result);
+            throw new ApiException($result, " while GET $url");
         }
 
         return $result;
@@ -306,9 +387,49 @@ class API {
         // return array($status, $data, $results, $postSend);
     }
 
+    /**
+     * Rollback mechanism
+     *
+     * Doesn't handle DELETE, PUT and PATCH
+     * Handles POST
+     */
+    public function rollback() {
+        $this->debug("Rolling back changes..");
+
+        try {
+            while(!empty($this->changes)) {
+                $change = $this->changes[0];
+
+                switch ($change['op']) {
+                    case 'CREATE':
+                        $this->delete($change['type'], $change['id']);
+                }
+
+                array_shift($this->changes);
+            }
+
+        } catch (\Exception $ex) {
+            error_log("Couldn't rollback following changes: \n" . var_export($this->changes, true));
+            throw new \Exception("Caught exception while rolling back. DB is in non-consistent state.", 0, $ex);
+        }
+
+        $this->changes = array();
+        $this->debug("Changes rolled back.");
+    }
+
+    public function commit() {
+        // there is one rollback point
+        $this->changes = array();
+    }
+
     private function debug($msg) {
         if (defined('DEBUG') and DEBUG) {
             echo $msg . "\n";
         }
     }
+}
+
+function is_array_assoc($arr)
+{
+    return array_keys($arr) !== range(0, count($arr) - 1);
 }

@@ -1,5 +1,26 @@
 {
+  "name": "epforgpl/parldata-scrapers-poland-senat",
+  "type": "library",
+  "description": "Scraping data from Polish Senat to api.parldata.eu",
+  "keywords": [
+    "scraper",
+    "parser",
+    "poland",
+    "polish",
+    "senat",
+    "senate",
+    "parldata",
+    "updater"
+  ],
+  "homepage": "https://github.com/epforgpl//parldata-scrapers-poland-senat",
+  "authors": [
+    {
+      "name": "Krzysztof Madejski",
+      "email": "krzysztof.madejski@epf.org.pl",
+      "homepage": "http://epf.org.pl"
+    }
+  ],
   "require": {
-
+    "epforgpl/parsers-senat": "0.3.0"
   }
 }
