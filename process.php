@@ -359,8 +359,9 @@ class SenatUpdater {
 
     function updateSittingsList() {
         // cannot start when there's no people scraped yet
-
-
+        if (!$this->current_chamber_has_senators) {
+            return;
+        }
 
         $list = array();
         foreach ($this->parser->updateMeetingsList() as $w) {
