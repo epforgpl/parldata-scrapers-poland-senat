@@ -8,6 +8,4 @@ define('API_ENDPOINT', 'https://api.parldata.eu/pl/senat');
 define('DEBUG', false);
 define('CACHE_ENABLED', false);
 define('SKIP_CRT_VALIDATION', false);
-define('FIRST_PASS', true); // change to false after first pass :)i
-
-// TODO first pass script
+define('FIRST_PASS', true); // change to false after first time calling updateSenatorsList and updateSenators :)i
