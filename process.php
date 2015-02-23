@@ -623,23 +623,26 @@ class SenatUpdater {
                 foreach ($votings as $webvote) {
                     $id_vote_event = $id_sitting . '-' . $webvote['no'];
 
-                    if (has_key($motion2id, $webvote['motion'])) {
-                        $id_motion = $motion2id[$webvote['motion']];
+                    $id_motion = null;
+                    if (has_key($webvote, 'motion')) {
+                        if (has_key($motion2id, $webvote['motion'])) {
+                            $id_motion = $motion2id[$webvote['motion']];
 
-                    } else {
-                        // optimalization: batch create motions
-                        $motion = $this->api->getOrCreate('motions', array(
-                            'identifier' => $webvote['motion']
-                        ), array(
-                            'organization_id' => $this->current_chamber,
-                            // sittings are processed chronologically so we can suppose it was proposed at first processed sitting
-                            'legislative_session_id' => $id_sitting,
-                            'identifier' => $webvote['motion'], // identifier == title
-                            'date' => $sitting->start_date,
-                            'sources' => array(array('url' => $webvote['source']))
-                        ));
+                        } else {
+                            // optimalization: batch create motions
+                            $motion = $this->api->getOrCreate('motions', array(
+                                'identifier' => $webvote['motion']
+                            ), array(
+                                'organization_id' => $this->current_chamber,
+                                // sittings are processed chronologically so we can suppose it was proposed at first processed sitting
+                                'legislative_session_id' => $id_sitting,
+                                'identifier' => $webvote['motion'], // identifier == title
+                                'date' => $sitting->start_date,
+                                'sources' => array(array('url' => $webvote['source']))
+                            ));
 
-                        $motion2id[$webvote['motion']] = $id_motion = $motion->id;
+                            $motion2id[$webvote['motion']] = $id_motion = $motion->id;
+                        }
                     }
 
                     $vote_event = array(
@@ -647,7 +650,6 @@ class SenatUpdater {
                         'organization_id' => $this->current_chamber,
                         'legislative_session_id' => $id_sitting,
                         'identifier' => $sitting->identifier . ',' . $webvote['no'],
-                        'motion_id' => $id_motion,
                         'start_date' => $sitting->start_date,
                         // 'result' => 'pass|fail' if needed parse http://senat.gov.pl/prace/senat/posiedzenia/tematy,19,1.html from sources
                         // 'group_results' if needed search SenatParser for results_clubs_url
@@ -658,6 +660,11 @@ class SenatUpdater {
                             'url' => $webvote['source']
                         ))
                     );
+
+                    if ($id_motion != null) {
+                        $vote_event['motion_id'] = $id_motion;
+                    }
+
                     array_push($vote_events, $vote_event);
                 }
 

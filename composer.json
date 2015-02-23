@@ -27,6 +27,6 @@
     }
   ],
   "require": {
-    "epforgpl/parsers-senat": "0.3.0"
+    "epforgpl/parsers-senat": "0.3.1"
   }
 }
