@@ -99,10 +99,11 @@ class SenatUpdater {
         $offset = 0;
         $step = intval(60 / (count($methods) - 3));
 
-        echo "# sudo php process.php crontab > /etc/cron.d/scrapers-poland-senat\n";
+        echo "# sudo php process.php crontab | sed 's/USER/visegrad/g' > /etc/cron.d/scrapers-poland-senat\n";
         foreach($methods as $method) {
-            if (!in_array($method->name, array('__construct', 'crontab', 'run'))) {
-                echo "$offset * * * * root php " . __FILE__ . ' ' . $method->name . "\n";
+            $job = $method->name;
+            if (!in_array($job, array('__construct', 'crontab', 'run'))) {
+                echo "$offset * * * * USER php " . __FILE__ . " $job > /var/log/scrapers/pl/senat/$job.log 2>&1\n";
                 $offset += $step;
             }
         }
