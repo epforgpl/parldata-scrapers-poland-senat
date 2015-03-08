@@ -358,7 +358,7 @@ class SenatUpdater {
     }
 
 
-    function updateSittingsList() {
+    function updateSessionsList() {
         // cannot start when there's no people scraped yet
         if (!$this->current_chamber_has_senators) {
             return;
@@ -366,29 +366,29 @@ class SenatUpdater {
 
         $list = array();
         foreach ($this->parser->updateMeetingsList() as $w) {
-            $list['sitting_' . $w['number']]['web'] = $w;
+            $list['session_' . $w['number']]['web'] = $w;
         }
-        $sittings = $this->api->find('events', array(
+        $sessions = $this->api->find('events', array(
             'all' => true,
             'where' => array(
-                'type' => 'sitting',
+                'type' => 'session',
                 'organization_id' => $this->current_chamber
             )
         ));
 
-        foreach ($sittings->_items as $a) {
+        foreach ($sessions->_items as $a) {
             $list[$a->id]['api'] = $a;
         }
 
         foreach ($list as $id => $data) {
             if (has_key($data, 'web')) {
                 if (!has_key($data, 'api')) {
-                    // add new sitting
+                    // add new session
                     $w = $data['web'];
 
                     $event = array(
-                        'id' => 'sitting_' . $w['number'],
-                        'type' => 'sitting',
+                        'id' => 'session_' . $w['number'],
+                        'type' => 'session',
                         'organization_id' => $this->current_chamber,
                         'identifier' => $w['id'], // source identifier
                         'name' => $w['name'],
@@ -396,15 +396,15 @@ class SenatUpdater {
                         'end_date' => $w['dates'][count($w['dates']) - 1] . 'T00:00:00',
                         'sources' => array(array('url' => $w['topics_url']))
                     );
-                    $id_sitting_parent = $this->api->create('events', $event);
+                    $id_session_parent = $this->api->create('events', $event);
 
                     $day = 0;
                     foreach ($w['dates'] as $date) {
                         $day++;
                         $event = array(
-                            'id' => 'sitting_' . $w['number'] . '_' . $day,
-                            'parent_id' => $id_sitting_parent,
-                            'type' => 'sitting',
+                            'id' => 'session_' . $w['number'] . '_' . $day,
+                            'parent_id' => $id_session_parent,
+                            'type' => 'session',
                             'organization_id' => $this->current_chamber,
                             'identifier' => $w['id'] . ',' . $day, // source identifier
                             'name' => $w['name'] . ' - Dzień ' . $day,
@@ -420,15 +420,15 @@ class SenatUpdater {
     }
 
     /**
-     * Fills all info about bunch of sittings
+     * Fills all info about bunch of sessions
      */
-    function updateSittings() {
+    function updateSessions() {
         $batch = 20;
 
-        $sittings = $this->api->find('events', array(
+        $sessions = $this->api->find('events', array(
             'max_results' => min($batch, 50),
             'where' => array(
-                'type' => 'sitting',
+                'type' => 'session',
                 'sources' => array(
                     '$exists' => false
                 )
@@ -440,10 +440,10 @@ class SenatUpdater {
             $name2id[$p->name] = $p->id;
         }
 
-        foreach ($sittings->_items as $sitting) {
+        foreach ($sessions->_items as $session) {
             try {
-                $id_sitting = $sitting->id;
-                $stenogram = $this->parser->getStenogram($sitting->identifier);
+                $id_session = $session->id;
+                $stenogram = $this->parser->getStenogram($session->identifier);
                 $source = $stenogram['source'];
                 $node = $stenogram['node'];
 
@@ -451,7 +451,7 @@ class SenatUpdater {
                 $speeches = array();
                 $speech = null;
                 $speech_text = '';
-                $time = $sitting->start_date; // TODO update with time
+                $time = $session->start_date; // TODO update with time
                 $close_now = false;
 
                 foreach ($node->children() as $line) {
@@ -467,11 +467,11 @@ class SenatUpdater {
                         // close speech fragment
                         if ($speech) {
                             array_push($speeches, array_merge($speech, array(
-                                'id' => $id_sitting . '-' . $pos,
+                                'id' => $id_session . '-' . $pos,
                                 'text' => $speech_text,
                                 'date' => $time,
                                 'position' => $pos,
-                                'event_id' => $id_sitting,
+                                'event_id' => $id_session,
                                 'sources' => array(array('url' => $source))
                             )));
 
@@ -573,12 +573,12 @@ class SenatUpdater {
                 } // end of stenogram
 
                 $this->api->create('speeches', $speeches);
-                $this->api->update('events', $sitting->id, array(
+                $this->api->update('events', $session->id, array(
                     'sources' => array(array('url' => $source))
                 ));
 
             } catch (Exception $ex) {
-                $err = $ex->getMessage() . ' in ' . $this->parser->urlSittingStenogram($sitting->identifier);
+                $err = $ex->getMessage() . ' in ' . $this->parser->urlSittingStenogram($session->identifier);
                 error_log($err);
                 array_push($this->errors, $err);
             }
@@ -588,41 +588,42 @@ class SenatUpdater {
     // TODO przemowienia, np. http://senat.gov.pl/prace/senat/posiedzenia/przebieg,19,2,przemowienia.html
 
     /**
-     * Updates vote events for some sittings
-     * All vote events of given sitting are processed at once (all or none goes into API)
+     * Updates vote events for some sessions
+     * All vote events of given sessions are processed at once (all or none goes into API)
      *
      * @see http://www.senat.gov.pl/gfx/senat/pl/senatopracowania/29/plik/ot-611.pdf
      */
     function updateVoteEvents() {
         $batch = 20;
 
-        $sittings = $this->api->find('events', array(
+        $sessions = $this->api->find('events', array(
             'max_results' => min($batch, 50),
             'where' => array(
-                'sources.note' => array('$ne' => 'vote_events'), // note=vote_events marks processed sittings
+                'type' => 'session',
+                'sources.note' => array('$ne' => 'vote_events'), // note=vote_events marks processed sessions
                 'parent_id' => array('$exists' => false)
             ),
             'sort' => 'start_date'
         ));
 
-        if (empty($sittings->_items)) {
+        if (empty($sessions->_items)) {
             return;
         }
 
         // cache motions
         $motion2id = array();
 
-        foreach ($sittings->_items as $sitting) {
+        foreach ($sessions->_items as $session) {
             $this->api->commit();
 
             try {
-                $id_sitting = $sitting->id;
+                $id_session = $session->id;
 
                 $vote_events = array();
-                $votings = $this->parser->updateMeetingVotings($sitting->identifier);
+                $votings = $this->parser->updateMeetingVotings($session->identifier);
 
                 foreach ($votings as $webvote) {
-                    $id_vote_event = $id_sitting . '-' . $webvote['no'];
+                    $id_vote_event = $id_session . '-' . $webvote['no'];
 
                     $id_motion = null;
                     if (has_key($webvote, 'motion')) {
@@ -635,10 +636,10 @@ class SenatUpdater {
                                 'identifier' => $webvote['motion']
                             ), array(
                                 'organization_id' => $this->current_chamber,
-                                // sittings are processed chronologically so we can suppose it was proposed at first processed sitting
-                                'legislative_session_id' => $id_sitting,
+                                // sessions are processed chronologically so we can suppose it was proposed at first processed session
+                                'legislative_session_id' => $id_session,
                                 'identifier' => $webvote['motion'], // identifier == title
-                                'date' => $sitting->start_date,
+                                'date' => $session->start_date,
                                 'sources' => array(array('url' => $webvote['source']))
                             ));
 
@@ -649,9 +650,9 @@ class SenatUpdater {
                     $vote_event = array(
                         'id' => $id_vote_event,
                         'organization_id' => $this->current_chamber,
-                        'legislative_session_id' => $id_sitting,
-                        'identifier' => $sitting->identifier . ',' . $webvote['no'],
-                        'start_date' => $sitting->start_date,
+                        'legislative_session_id' => $id_session,
+                        'identifier' => $session->identifier . ',' . $webvote['no'],
+                        'start_date' => $session->start_date,
                         // 'result' => 'pass|fail' if needed parse http://senat.gov.pl/prace/senat/posiedzenia/tematy,19,1.html from sources
                         // 'group_results' if needed search SenatParser for results_clubs_url
                         'sources' => array(array(
@@ -673,10 +674,10 @@ class SenatUpdater {
                     $this->api->create('vote-events', $vote_events);
                 }
 
-                $this->api->update('events', $id_sitting, array(
+                $this->api->update('events', $id_session, array(
                     'sources' => array(array(
-                        'url' => $this->parser->urlMeetingsVotings($sitting->identifier, 1),
-                        'note' => 'vote_events' // note=vote_events marks processed sittings
+                        'url' => $this->parser->urlMeetingsVotings($session->identifier, 1),
+                        'note' => 'vote_events' // note=vote_events marks processed sessions
                     ))
                 ));
                 $this->api->commit();
@@ -684,7 +685,7 @@ class SenatUpdater {
             } catch (ParserException $ex) {
                 $this->api->rollback();
 
-                $err = $ex->getMessage() . ' in ' . $this->parser->urlMeetingsVotings($sitting->identifier, 1) . ' or following days';
+                $err = $ex->getMessage() . ' in ' . $this->parser->urlMeetingsVotings($session->identifier, 1) . ' or following days';
                 error_log($err);
                 array_push($this->errors, $err);
 
