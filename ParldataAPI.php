@@ -2,7 +2,7 @@
 
 namespace parldata;
 
-define('MAX_POST_ITEMS', 500);
+define('MAX_POST_ITEMS', 100);
 
 class ApiException extends \Exception {
     public function __construct($result, $extra_message = '') {

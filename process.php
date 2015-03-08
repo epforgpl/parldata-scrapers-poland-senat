@@ -454,6 +454,7 @@ class SenatUpdater {
                 $new_sitting_id = $current_event_id = $id_session;
 
                 $speech = null;
+                $id_speaker = null;
                 $speech_text = '';
                 $time = $session->start_date; // TODO update with time
                 $close_now = false;
@@ -466,8 +467,12 @@ class SenatUpdater {
 
                     $matches = array();
                     $elemType = $line->tag . '.' . $line->class;
+                    $text_in_parentheses = preg_match('/^\\(([^\\)]*)\\)?$/', $text, $matches);
 
-                    if ($close_now or in_array($elemType, array('p.centr-P', 'p.haslo-P', 'h3.'))) {
+                    if ($close_now
+                        or in_array($elemType, array('p.centr-P', 'p.haslo-P', 'h3.'))
+                        or ($elemType == 'p.bodytext-P' and $text_in_parentheses) //interruption
+                    ) {
                         // close speech fragment
                         if ($speech and !empty($speech_text)) {
                             array_push($speeches, array_merge($speech, array(
@@ -487,120 +492,150 @@ class SenatUpdater {
                     }
                     $current_event_id = $new_sitting_id;
 
-                    switch ($elemType) {
-                        case 'p.centr-P':
-                            if (!preg_match('/^\\((.*)\\)?$/', $text, $matches)) {
-                                throw new ParserException("Was expecting parentheses around [.centr-P]: " . $text);
-                            }
+                    if ($elemType == 'p.centr-P') {
+                        if (!preg_match('/^\\((.*)\\)?$/', $text, $matches)) {
+                            throw new ParserException("Was expecting parentheses around [.centr-P]: " . $text);
+                        }
+                        $speech_text = trim($matches[1]);
+                        $speech = array('type' => 'narrative');
+                        $close_now = true;
+
+                        // (Początek posiedzenia o godzinie 9 minut 02)
+                        // (Przerwa w obradach od godziny 13 minut 01 do godziny 14 minut 00)
+                        // (Przerwa w posiedzeniu o godzinie 21 minut 50)
+
+                    } else if ($elemType == 'p.haslo-P' || $elemType == 'h3.' ||
+                        ($elemType == 'p.bodytext-P' and $text_in_parentheses)) {
+
+                        if ($text_in_parentheses) {
                             $speech_text = trim($matches[1]);
-                            $speech = array('type' => 'narrative');
+
+                            // (Rozmowy na sali)
+                            if (($colon_pos = strpos($speech_text, ':')) === false) {
+                                $speech = array('type' => 'scene');
+                                $close_now = true;
+                                continue;
+
+                            }
+
+                            // (Głos z sali: Więcej rąk niż odcinków dróg.)
+                            // (Senator Stanisław Kogut: Nie żartujcie.)
+                            $text = trim(substr($speech_text, 0, $colon_pos)); // senator's name
+                            $speech_text = trim(substr($speech_text, $colon_pos + 1));
                             $close_now = true;
 
-                            // (Początek posiedzenia o godzinie 9 minut 02)
-                            // (Przerwa w obradach od godziny 13 minut 01 do godziny 14 minut 00)
-                            // (Przerwa w posiedzeniu o godzinie 21 minut 50)
-                            break;
-
-                        case 'p.haslo-P':
-                        case 'h3.':
-                            // speaker definition
-                            $text = trim(trim($text), ':');
-
-                            $id_speaker = null;
-                            foreach ($name2id as $_name => $_id) {
-                                if (endsWith($text, $_name)) {
-                                    $id_speaker = $_id;
-                                    break;
-                                }
+                            if ($text == 'Głos z sali' or $text == 'Głosy z sali'
+                                or $text == 'Glos z sali' or $text == 'Glosy z sali'
+                                or $text == 'Zgromadzeni odpowiadają') {
+                                $speech = array(
+                                    'type' => 'speech',
+                                    'attribution_text' => 'Głos z sali'
+                                );
+                                continue;
                             }
+                        }
 
-                            try {
-                                $name_idx = $this->parser->findIndexOfName($text);
+                        // speaker definition
+                        $text = trim(trim($text), ':');
 
-                            } catch (ParserException $ex) {
-                                // that's an exception!
-                                if ($text == 'Wicemarszałek Pańczyk-Pozdziej') {
-                                    $person = array(
-                                        'name' => 'Pańczyk-Pozdziej',
-                                        'family_name' => 'Pańczyk-Pozdziej',
-                                        'summary' => $role = 'Wicemarszałek'
-                                    );
-
-                                    $id_speaker = $this->api->createPerson($person);
-                                    $name2id[$person['name']] = $id_speaker;
-                                    $name_idx = 14;
-                                } else {
-                                    throw $ex;
-                                }
+                        $prev_id_speaker = $id_speaker;
+                        $id_speaker = null;
+                        foreach ($name2id as $_name => $_id) {
+                            if (endsWith($text, $_name)) {
+                                $id_speaker = $_id;
+                                break;
                             }
+                        }
 
-                            $role = trim(substr($text, 0, $name_idx));
+                        try {
+                            $name_idx = $this->parser->findIndexOfName($text);
 
-                            if ($id_speaker == null) {
-                                $person = $this->parser->parseFullName(trim(substr($text, $name_idx)));
-                                $person['summary'] = $role;
+                        } catch (ParserException $ex) {
+                            // that's an exception!
+                            if ($text == 'Wicemarszałek Pańczyk-Pozdziej') {
+                                $person = array(
+                                    'name' => 'Pańczyk-Pozdziej',
+                                    'family_name' => 'Pańczyk-Pozdziej',
+                                    'summary' => $attribution_text = 'Wicemarszałek'
+                                );
 
                                 $id_speaker = $this->api->createPerson($person);
                                 $name2id[$person['name']] = $id_speaker;
+                                $name_idx = 14;
+                            } else {
+                                throw $ex;
                             }
+                        }
 
+                        $attribution_text = trim(substr($text, 0, $name_idx));
+
+                        if ($id_speaker == null) {
+                            $person = $this->parser->parseFullName(trim(substr($text, $name_idx)));
+                            $person['summary'] = $attribution_text;
+
+                            $id_speaker = $this->api->createPerson($person);
+                            $name2id[$person['name']] = $id_speaker;
+                        }
+
+                        $speech = array(
+                            'type' => 'speech',
+                            'creator_id' => $id_speaker,
+                            'attribution_text' => $attribution_text
+                        );
+
+                        if ($text_in_parentheses) {
+                            // go back to who was speaking before interrupted
+                            $id_speaker = $prev_id_speaker;
+                        }
+
+                    } else if ($elemType == 'h1.stenogram-ukryj-naglowek') {
+                        // Table of Contents - $line->id - get sittings, skip other
+                        $sitting = array(
+                            'id' => $id_session . '-' . ($sitting_no++),
+                            'type' => 'sitting',
+                            'organization_id' => $this->current_chamber,
+                            'parent_id' => $id_session,
+                            'name' => $text,
+                            'start_date' => $session->start_date,
+                            'end_date' => $session->end_date,
+                            'sources' => array(array('url' => $source))
+                        );
+                        $current_event_id = $new_sitting_id;
+                        $new_sitting_id = $sitting['id'];
+                        $close_now = true;
+
+                        array_push($sittings, $sitting);
+
+                    } else if ($elemType == 'h2.stenogram-ukryj-naglowek' ||
+                        $elemType == 'h3.stenogram-ukryj-naglowek' ||
+                        $elemType == 'h4.stenogram-ukryj-naglowek'
+                    ) {
+                        // Table of Contents details - skip
+
+                    } else if ($elemType == 'script.') {
+                        // junk
+
+                    } else if (
+                        $elemType == 'p.bodytext-P' ||
+                        $elemType == 'p.pos-P' ||
+                        $elemType == 'p.oskierow-P'
+                    ) {
+                        // actual speech
+                        $speech_text .= ($speech_text != '' ? ' ' : '') . $text;
+
+                        if (!$speech) {
+                            // reopen last speech
                             $speech = array(
                                 'type' => 'speech',
                                 'creator_id' => $id_speaker,
-                                'role' => $role
+                                'attribution_text' => $attribution_text
                             );
+                        }
 
-                            break;
+                        // <a href="#" class="jq-szczegoly-glosowania" rel="id_1813">Głosowanie nr 2</a>
 
-                        // Table of Contents - $line->id - get sittings, skip other
-                        case 'h1.stenogram-ukryj-naglowek':
-                            $sitting = array(
-                                'id' => $id_session . '-' . ($sitting_no++),
-                                'type' => 'sitting',
-                                'organization_id' => $this->current_chamber,
-                                'parent_id' => $id_session,
-                                'name' => $text,
-                                'start_date' => $session->start_date,
-                                'end_date' => $session->end_date,
-                                'sources' => array(array('url' => $source))
-                            );
-                            $current_event_id = $new_sitting_id;
-                            $new_sitting_id = $sitting['id'];
-                            $close_now = true;
-
-                            array_push($sittings, $sitting);
-                            break;
-
-                        // Table of Contents - $line->id - get sittings, skip other
-                        case 'h2.stenogram-ukryj-naglowek':
-                        case 'h3.stenogram-ukryj-naglowek':
-                        case 'h4.stenogram-ukryj-naglowek':
-                            break;
-
-                        // Junk
-                        case 'script.':
-                            break;
-
-                        case 'p.bodytext-P':
-                        case 'p.pos-P':
-                        case 'p.oskierow-P':
-                            // actual speech
-                            $speech_text .= ($speech_text != '' ? ' ' : '') . $text;
-
-                            if (!$speech) {
-                                // reopen last speech
-                                $speech = array(
-                                    'type' => 'speech',
-                                    'creator_id' => $id_speaker,
-                                    'role' => $role
-                                );
-                            }
-
-                            // <a href="#" class="jq-szczegoly-glosowania" rel="id_1813">Głosowanie nr 2</a>
-                            break;
-
-                        default:
-                            throw new ParserException("Unrecognized speech element: " . $elemType);
+                    } else {
+                        throw new ParserException("Unrecognized speech element: " . $elemType);
                     }
                 } // end of stenogram
 
@@ -609,11 +644,14 @@ class SenatUpdater {
                 $this->api->update('events', $session->id, array(
                     'sources' => array(array('url' => $source))
                 ));
+                $this->api->commit();
 
             } catch (Exception $ex) {
                 $err = $ex->getMessage() . ' in ' . $this->parser->urlSittingStenogram($session->identifier);
                 error_log($err);
                 array_push($this->errors, $err);
+
+                $this->api->rollback();
             }
         } // end of batch
     }
