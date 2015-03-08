@@ -449,6 +449,10 @@ class SenatUpdater {
 
                 $pos = 0;
                 $speeches = array();
+                $sittings = array();
+                $sitting_no = 0;
+                $new_sitting_id = $current_event_id = $id_session;
+
                 $speech = null;
                 $speech_text = '';
                 $time = $session->start_date; // TODO update with time
@@ -465,22 +469,23 @@ class SenatUpdater {
 
                     if ($close_now or in_array($elemType, array('p.centr-P', 'p.haslo-P', 'h3.'))) {
                         // close speech fragment
-                        if ($speech) {
+                        if ($speech and !empty($speech_text)) {
                             array_push($speeches, array_merge($speech, array(
                                 'id' => $id_session . '-' . $pos,
                                 'text' => $speech_text,
                                 'date' => $time,
                                 'position' => $pos,
-                                'event_id' => $id_session,
+                                'event_id' => $current_event_id,
                                 'sources' => array(array('url' => $source))
                             )));
 
                             $speech_text = '';
                             $speech = null;
                             $pos++;
-                            $close_now = false;
                         }
+                        $close_now = false;
                     }
+                    $current_event_id = $new_sitting_id;
 
                     switch ($elemType) {
                         case 'p.centr-P':
@@ -547,8 +552,26 @@ class SenatUpdater {
 
                             break;
 
-                        // Table of Contents - $line->id - skip
+                        // Table of Contents - $line->id - get sittings, skip other
                         case 'h1.stenogram-ukryj-naglowek':
+                            $sitting = array(
+                                'id' => $id_session . '-' . ($sitting_no++),
+                                'type' => 'sitting',
+                                'organization_id' => $this->current_chamber,
+                                'parent_id' => $id_session,
+                                'name' => $text,
+                                'start_date' => $session->start_date,
+                                'end_date' => $session->end_date,
+                                'sources' => array(array('url' => $source))
+                            );
+                            $current_event_id = $new_sitting_id;
+                            $new_sitting_id = $sitting['id'];
+                            $close_now = true;
+
+                            array_push($sittings, $sitting);
+                            break;
+
+                        // Table of Contents - $line->id - get sittings, skip other
                         case 'h2.stenogram-ukryj-naglowek':
                         case 'h3.stenogram-ukryj-naglowek':
                         case 'h4.stenogram-ukryj-naglowek':
@@ -564,6 +587,15 @@ class SenatUpdater {
                             // actual speech
                             $speech_text .= ($speech_text != '' ? ' ' : '') . $text;
 
+                            if (!$speech) {
+                                // reopen last speech
+                                $speech = array(
+                                    'type' => 'speech',
+                                    'creator_id' => $id_speaker,
+                                    'role' => $role
+                                );
+                            }
+
                             // <a href="#" class="jq-szczegoly-glosowania" rel="id_1813">Głosowanie nr 2</a>
                             break;
 
@@ -572,6 +604,7 @@ class SenatUpdater {
                     }
                 } // end of stenogram
 
+                $this->api->create('events', $sittings);
                 $this->api->create('speeches', $speeches);
                 $this->api->update('events', $session->id, array(
                     'sources' => array(array('url' => $source))
