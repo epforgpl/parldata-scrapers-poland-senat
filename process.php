@@ -380,18 +380,24 @@ class SenatUpdater {
             $list[$a->id]['api'] = $a;
         }
 
+        $matches = null;
         foreach ($list as $id => $data) {
             if (has_key($data, 'web')) {
                 if (!has_key($data, 'api')) {
                     // add new session
                     $w = $data['web'];
+                    $session_name = $w['name'];
+                    if (!preg_match("/^(\\d+)\\.\\s*posiedzenie/", $session_name, $matches)) {
+                        throw new ParserException("Unrecognized session patter: $session_name");
+                    }
+                    $session_name = $matches[1] . ' posiedzenie';
 
                     $event = array(
                         'id' => 'session_' . $w['number'],
                         'type' => 'session',
                         'organization_id' => $this->current_chamber,
                         'identifier' => $w['id'], // source identifier
-                        'name' => $w['name'],
+                        'name' => $session_name,
                         'start_date' => $w['dates'][0] . 'T00:00:00',
                         'end_date' => $w['dates'][count($w['dates']) - 1] . 'T00:00:00',
                         'sources' => array(array('url' => $w['topics_url']))
@@ -407,13 +413,14 @@ class SenatUpdater {
                             'type' => 'session',
                             'organization_id' => $this->current_chamber,
                             'identifier' => $w['id'] . ',' . $day, // source identifier
-                            'name' => $w['name'] . ' - Dzień ' . $day,
+                            'name' => 'Dzień ' . $day,
                             'start_date' => $date . 'T00:00:00',
                             'end_date' => $date . 'T00:00:00'
                         );
 
                         $this->api->create('events', $event);
                     }
+                    $this->api->commit();
                 }
             }
         }
@@ -921,7 +928,7 @@ class SenatUpdater {
 
                 $org = array(
                     'id' => $chamber_id,
-                    'name' => 'Senat - kadencja ' . $term['id'],
+                    'name' => 'Kadencja ' . $term['id'],
                     'classification' => 'chamber',
                     'founding_date' => $term['start_date'],
                     'sources' => array(array(
