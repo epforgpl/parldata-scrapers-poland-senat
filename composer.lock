@@ -4,20 +4,20 @@
         "Read more about it at http://getcomposer.org/doc/01-basic-usage.md#composer-lock-the-lock-file",
         "This file is @generated automatically"
     ],
-    "hash": "0628470d5f1f1a146231c6bc802b3465",
+    "hash": "a9c6e1dc986655433b578dc68160a622",
     "packages": [
         {
             "name": "epforgpl/parsers-senat",
-            "version": "v0.4.0",
+            "version": "v0.4.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/epforgpl/parsers-senat.git",
-                "reference": "81142cea7ef7544a22efae0a4bc87aba528d739a"
+                "reference": "dc165a24fca43879dc92c0a75984410a7ba5d497"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/epforgpl/parsers-senat/zipball/81142cea7ef7544a22efae0a4bc87aba528d739a",
-                "reference": "81142cea7ef7544a22efae0a4bc87aba528d739a",
+                "url": "https://api.github.com/repos/epforgpl/parsers-senat/zipball/dc165a24fca43879dc92c0a75984410a7ba5d497",
+                "reference": "dc165a24fca43879dc92c0a75984410a7ba5d497",
                 "shasum": ""
             },
             "require": {
@@ -53,10 +53,10 @@
                 "senate"
             ],
             "support": {
-                "source": "https://github.com/epforgpl/parsers-senat/tree/v0.4.0",
+                "source": "https://github.com/epforgpl/parsers-senat/tree/v0.4.1",
                 "issues": "https://github.com/epforgpl/parsers-senat/issues"
             },
-            "time": "2015-03-08 21:52:30"
+            "time": "2015-03-17 14:58:00"
         },
         {
             "name": "gilbitron/php-simplecache",
