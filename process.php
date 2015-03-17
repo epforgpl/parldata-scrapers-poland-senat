@@ -531,8 +531,8 @@ class SenatUpdater {
                             $speech_text = trim(substr($speech_text, $colon_pos + 1));
                             $close_now = true;
 
-                            if ($text == 'Głos z sali' or $text == 'Głosy z sali'
-                                or $text == 'Glos z sali' or $text == 'Glosy z sali'
+                            if (((mb_strpos($text, 'Głos') !== false or mb_strpos($text, 'Glos') !== false)
+                                and mb_strpos($text, 'sali') !== false)
                                 or $text == 'Zgromadzeni odpowiadają') {
                                 $speech = array(
                                     'type' => 'speech',
@@ -544,6 +544,10 @@ class SenatUpdater {
 
                         // speaker definition
                         $text = trim(trim($text), ':');
+
+                        if ($text == 'Senator Owczarek') {
+                            $text = 'Senator Andrzej Owczarek';
+                        }
 
                         $prev_id_speaker = $id_speaker;
                         $id_speaker = null;
@@ -569,6 +573,7 @@ class SenatUpdater {
                                 $id_speaker = $this->api->createPerson($person);
                                 $name2id[$person['name']] = $id_speaker;
                                 $name_idx = 14;
+
                             } else {
                                 throw $ex;
                             }
