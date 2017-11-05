@@ -209,6 +209,11 @@ class API {
      * @return string
      */
     private function _post($url, $data = array(), $method = 'POST') {
+        if (defined('DRY_RUN') and DRY_RUN) {
+            echo "  Skipping $method to $url\n";
+            return;
+        }
+
         $options = array(
             //CURLOPT_POST => 1,
             CURLOPT_CUSTOMREQUEST => $method,

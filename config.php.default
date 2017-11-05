@@ -6,6 +6,7 @@ define('SCRAPER_PASSWORD', '');
 define('API_ENDPOINT', 'https://api.parldata.eu/pl/senat');
 
 define('DEBUG', false);
+define('DRY_RUN', false); // Don't actually post to the API
 define('CACHE_ENABLED', false);
 define('SKIP_CRT_VALIDATION', false);
 define('FIRST_PASS', true); // change to false after first time calling updateSenatorsList and updateSenators :)i
