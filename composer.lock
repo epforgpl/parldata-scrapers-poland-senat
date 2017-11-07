@@ -1,23 +1,24 @@
 {
     "_readme": [
         "This file locks the dependencies of your project to a known state",
-        "Read more about it at http://getcomposer.org/doc/01-basic-usage.md#composer-lock-the-lock-file",
+        "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#composer-lock-the-lock-file",
         "This file is @generated automatically"
     ],
-    "hash": "a9c6e1dc986655433b578dc68160a622",
+    "hash": "553e20f63129f5aadced0327f0d87543",
+    "content-hash": "79a6c37b9bf4125c22a058a60c79e418",
     "packages": [
         {
             "name": "epforgpl/parsers-senat",
-            "version": "v0.4.1",
+            "version": "v1.9.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/epforgpl/parsers-senat.git",
-                "reference": "dc165a24fca43879dc92c0a75984410a7ba5d497"
+                "reference": "3b9646b5e95ca0eafa6adcb3d70bae73f2b44c0f"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/epforgpl/parsers-senat/zipball/dc165a24fca43879dc92c0a75984410a7ba5d497",
-                "reference": "dc165a24fca43879dc92c0a75984410a7ba5d497",
+                "url": "https://api.github.com/repos/epforgpl/parsers-senat/zipball/3b9646b5e95ca0eafa6adcb3d70bae73f2b44c0f",
+                "reference": "3b9646b5e95ca0eafa6adcb3d70bae73f2b44c0f",
                 "shasum": ""
             },
             "require": {
@@ -53,23 +54,23 @@
                 "senate"
             ],
             "support": {
-                "source": "https://github.com/epforgpl/parsers-senat/tree/v0.4.1",
+                "source": "https://github.com/epforgpl/parsers-senat/tree/v1.9.0",
                 "issues": "https://github.com/epforgpl/parsers-senat/issues"
             },
-            "time": "2015-03-17 14:58:00"
+            "time": "2017-11-07 14:42:52"
         },
         {
             "name": "gilbitron/php-simplecache",
-            "version": "1.4.1",
+            "version": "1.4.2",
             "source": {
                 "type": "git",
                 "url": "https://github.com/gilbitron/PHP-SimpleCache.git",
-                "reference": "eb43b12945955428ced0b55d711d57afc6c4c9b3"
+                "reference": "92da2b34d818c2c272d76521402163b53b3bb31f"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/gilbitron/PHP-SimpleCache/zipball/eb43b12945955428ced0b55d711d57afc6c4c9b3",
-                "reference": "eb43b12945955428ced0b55d711d57afc6c4c9b3",
+                "url": "https://api.github.com/repos/gilbitron/PHP-SimpleCache/zipball/92da2b34d818c2c272d76521402163b53b3bb31f",
+                "reference": "92da2b34d818c2c272d76521402163b53b3bb31f",
                 "shasum": ""
             },
             "require": {
@@ -98,7 +99,7 @@
                 "cache",
                 "simplecache"
             ],
-            "time": "2014-07-15 09:37:49"
+            "time": "2017-01-17 12:53:32"
         }
     ],
     "packages-dev": [],
