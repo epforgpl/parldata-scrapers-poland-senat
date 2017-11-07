@@ -200,7 +200,7 @@ class SenatUpdater {
         }
 
         $list = array();
-        foreach ($this->parser->updateSenatorsList($chamberNo) as $w) {
+        foreach ($this->parser->parseSenatorsList($chamberNo) as $w) {
             $list[$w['id']]['web'] = $w;
         }
         foreach ($this->api->findPeople(array('all' => true))->_items as $a) {
@@ -269,7 +269,7 @@ class SenatUpdater {
             $id_senator = $a->id;
 
             try {
-                $person_data = $this->parser->updateSenatorInfo($id_senator, $chamberNo);
+                $person_data = $this->parser->parseSenatorInfo($id_senator, $chamberNo);
             } catch (\epforgpl\parsers\NetworkException $e) {
                 if ($e->getCode() == 500) {
                     $this->warn("Skipping senator " . $a->id . ' ' . $a->name . ". Most probably not part of this chamber");
@@ -430,7 +430,7 @@ class SenatUpdater {
         }
 
         $list = array();
-        foreach ($this->parser->updateMeetingsList() as $w) {
+        foreach ($this->parser->parseMeetingsList() as $w) {
             $list[$event_id_prefix . $w['number']]['web'] = $w;
         }
         $sessions = $this->api->find('events', array(
@@ -743,8 +743,8 @@ class SenatUpdater {
                     }
                 } // end of stenogram
 
-                $this->api->create('events', $sittings);
-                $this->api->create('speeches', $speeches);
+                $this->api->createOrUpdate('events', $sittings);
+                $this->api->createOrUpdate('speeches', $speeches);
                 $this->api->update('events', $session->id, array(
                     'sources' => array(array('url' => $source))
                 ));
@@ -795,7 +795,7 @@ class SenatUpdater {
                 $id_session = $session->id;
 
                 $vote_events = array();
-                $votings = $this->parser->updateMeetingVotings($session->identifier);
+                $votings = $this->parser->parseMeetingVotings($session->identifier);
 
                 foreach ($votings as $webvote) {
                     $id_vote_event = $id_session . '-' . $webvote['no'];
@@ -920,7 +920,7 @@ class SenatUpdater {
                 $votes = array();
 
                 $id_vote_event = $vote_event->id;
-                $results = $this->parser->updatePeopleVotes($url);
+                $results = $this->parser->parsePeopleVotes($url);
 
                 $counts = array();
                 foreach ($results['grouped'] as $option => $value) {
