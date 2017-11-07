@@ -5,6 +5,8 @@ namespace parldata;
 define('MAX_POST_ITEMS', 100);
 
 class ApiException extends \Exception {
+    public $result;
+
     public function __construct($result, $extra_message = '') {
         parent::__construct($result->_error->message, $result->_error->code);
         $this->result = $result;
@@ -16,8 +18,11 @@ class ApiException extends \Exception {
 }
 
 class ValidationException extends ApiException {
-    public function __construct($result) {
-        parent::__construct($method, $url, $result);
+    public $issues;
+    public $items;
+
+    public function __construct($method, $url, $result, $extra_message = '') {
+        parent::__construct($result, $extra_message = '');
 
         $pre = "[$method] $url returned validation errors: ";
         if (isset($result->_issues)) {
@@ -48,6 +53,12 @@ class NotFoundException extends ApiException {
 
 
 class API {
+    private $endpoint;
+    private $user;
+    private $password;
+    private $useragent;
+    private $changes = array();
+
     public function __construct($endpoint, $user, $password, $useragent = 'ParlDataPHPApi/1.0') {
         $this->endpoint = $endpoint . '/';
         $this->user = $user;
@@ -57,6 +68,11 @@ class API {
     }
 
     public function create($type, $data) {
+        if (empty($data)) {
+            trigger_error ( "Tried to create empty $type", E_USER_NOTICE);
+            return;
+        }
+
         // chunk big inserts
         if (!is_array_assoc($data) && count($data) > MAX_POST_ITEMS) {
             $ids = array();
@@ -110,6 +126,85 @@ class API {
         }
     }
 
+    public function updateIfNeeded($type, $id, $data, $data_old) {
+        // convert to assoc array
+        $data_old = json_decode(json_encode($data_old), true);
+
+        // delete metadata
+        unset($data_old['updated_at']);
+        unset($data_old['created_at']);
+        unset($data_old['_links']);
+
+        $new_data = array_diff_assocr($data, $data_old);
+        $deleted_data = array_diff_assocr($data_old, $data);
+
+        if ($new_data or $deleted_data) {
+            $this->debug("[UPDATE] changing data $type " . $data['id'] . ": NEW " . json_encode($new_data) . "; DELETED: " . json_encode($deleted_data));
+            $this->update($type, $id, $data);
+        } else {
+            $this->debug("[UPDATE] skipping $type " . $data['id'] . " as no changes has been detected.");
+        }
+    }
+
+    public function createOrUpdate($type, $data) {
+        if (is_array_assoc($data)) {
+            // individual object
+            try {
+                $obj = $this->get($type, $data['id']);
+            } catch (NotFoundException $ex) {
+                return $this->create($type, $data);
+            }
+
+            updateIfNeeded($type, $data['id'], $data, $obj);
+
+            return;
+        }
+
+        // split existing and non-existing
+        $new_ids = $new_ids_backup = array_map(function ($s) {
+            return $s['id'];
+        }, $data);
+
+        $existing = array();
+        // chunk queries
+        $query_params_limit = 25; // don't change, API may limit it
+        for($offset = 0; $offset < count($new_ids); $offset += $query_params_limit) {
+            $ids_to_get = array_slice($new_ids, $offset, $query_params_limit);
+            $items = $this->find($type, array('max_results' => $query_params_limit, 'where' => array('id' => array('$in' => $ids_to_get))))->_items;
+            foreach ($items as $s) {
+                $existing[$s->id] = $s;
+            }
+        }
+
+        $to_create = array();
+        foreach($data as $o) {
+            if (isset($existing[$o['id']])) {
+                $this->updateIfNeeded($type, $o['id'], $o, $existing[$o['id']]);
+            } else {
+                array_push($to_create, $o);
+            }
+        }
+        $data = $to_create;
+
+        // chunk big inserts
+        if (!is_array_assoc($data) && count($data) > MAX_POST_ITEMS) {
+            $ids = array();
+
+            for($offset = 0; $offset < count($data); $offset += MAX_POST_ITEMS) {
+                $_ids = $this->create($type, array_slice($data, $offset, MAX_POST_ITEMS));
+                $ids = array_merge($ids, $_ids);
+            }
+
+            //return $ids;
+            return;
+        }
+
+        //return
+        if (!empty($data)) {
+            $this->create($type, $data);
+        }
+    }
+
     public function get($type, $id, $options = array()) {
         $this->debug("   [GET] " . $type . " " . $id . ' ' . json_encode($options));
 
@@ -140,6 +235,14 @@ class API {
     public function update($type, $id, $data, $replaceObject = false) {
         // TODO if data in array show in consecutive rows
         $this->debug("[UPDATE] " . $type . " " . $id . ($replaceObject ? ' PUT ' : ' PATCH ') . json_encode($data));
+
+        if (isset($data['id'])) {
+            if ($data['id'] == $id) {
+                unset($data['id']);
+            } else {
+                throw new \Exception("Are you trying to update $type $id or " . $data['id'] . "?");
+            }
+        }
 
         return $this->_post($this->endpoint . $type . '/' . $id, $data, $replaceObject ? 'PUT' : 'PATCH');
     }
@@ -249,7 +352,7 @@ class API {
 
         $ch = curl_init();
         curl_setopt_array($ch, $options);
-        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE); // TODO is it the right place to ask for it?
         if (($result = curl_exec($ch)) === false || $http_code >= 300) {
             $curl_error = curl_error($ch);
             curl_close($ch);
@@ -318,11 +421,17 @@ class API {
 
         $ch = curl_init();
         curl_setopt_array($ch, $defaults);
-        if (!$result = curl_exec($ch)) {
+        $result = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        if (!$result) {
             $curl_error = curl_error($ch);
             curl_close($ch);
 
             error_log("[GET] " . $url);
+            if ($http_code == 404) {
+                throw new NotFoundException('', $url);
+            }
             throw new NetworkException($curl_error);
         }
         curl_close($ch);
@@ -449,6 +558,26 @@ class API {
             echo $msg . "\n";
         }
     }
+}
+
+function array_diff_assocr($aArray1, $aArray2) {
+    $aReturn = array();
+
+    foreach ($aArray1 as $mKey => $mValue) {
+        if (array_key_exists($mKey, $aArray2)) {
+            if (is_array($mValue)) {
+                $aRecursiveDiff = array_diff_assocr($mValue, $aArray2[$mKey]);
+                if (count($aRecursiveDiff)) { $aReturn[$mKey] = $aRecursiveDiff; }
+            } else {
+                if ($mValue != $aArray2[$mKey]) {
+                    $aReturn[$mKey] = $mValue;
+                }
+            }
+        } else {
+            $aReturn[$mKey] = $mValue;
+        }
+    }
+    return $aReturn;
 }
 
 function is_array_assoc($arr)
