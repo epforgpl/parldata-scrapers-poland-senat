@@ -30,12 +30,24 @@ $updater->run(array_slice($argv, 1));
 class ScraperException extends \Exception {
 }
 
+
 class SenatUpdater {
+
+    private $userID;
+    private $api;
+    private $parser;
+    private $errors;
+    private $current_chamber;
+    private $current_chamber_arabic;
+    private $current_chamber_has_senators;
+    private $chambers;
+
     function __construct() {
         $this->api = new parldata\API(API_ENDPOINT, SCRAPER_USER, SCRAPER_PASSWORD, 'ParlDataPHPApi/1.0 SenatParser/1.2');
         $this->parser = new epforgpl\parsers\Senat();
         $this->errors = array();
         $this->current_chamber = null;
+        $this->current_chamber_arabic = null;
         $this->current_chamber_has_senators = false;
 
         $this->chambers = array();
@@ -53,7 +65,7 @@ class SenatUpdater {
                 'scheme' => 'senat.gov.pl',
                 'identifier' => $web['id']
             )),
-            'sources' => array(array('url' => $web['url']))
+            'sources' => array(array('url' => $web['url'])) // TODO how to record POST data?
         );
 
         if (has_key($web, 'additional_name') and $web['additional_name']) {
@@ -110,12 +122,13 @@ class SenatUpdater {
     }
 
     function run($args) {
-        if (count($args) != 1 || !$args[0]) {
-            echo "Updater takes one argument: job_name";
+        if (count($args) < 1 || !$args[0]) {
+            echo "Updater requires at least one argument: job_name";
             return;
         }
 
         $job = $args[0];
+        $params = array_splice( $args, 1 );
 
         if (!method_exists($this, $job)) {
             throw new Exception("Unknown job: " . $job);
@@ -126,7 +139,7 @@ class SenatUpdater {
         }
 
         $log = array(
-            'label' => $job,
+            'label' => $job . ' ' . join(' ', $params),
             'status' => 'running',
             'params' => array()
         );
@@ -135,23 +148,26 @@ class SenatUpdater {
 
         try {
             $terms = $this->parser->getTermsOfOffice();
-            if ($terms[0]['id'] == 'VII') {
+            if ($terms[0]['id'] == 'VIII') { // poprzednia kadencja
                 // add current term
                 array_unshift($terms, array(
-                    'id' => 'VIII',
-                    'start_date' => '2011-10-09',
-                    'source' => 'http://www.senat.gov.pl/o-senacie/senat-wspolczesny/dane-o-senatorach-wg-stanu-na-dzien-wyborow/'
+                    'id' => 'IX',
+                    'start_date' => '2015-11-12',
+                    'source' => 'http://www.senat.gov.pl/prace/senat/posiedzenia/page,2.html'
                 ));
 
                 $this->ensureChambersCreated($terms);
 
             } else {
-                // TODO maybe automatic term_id increment and setting dates
                 throw new Exception('New term of office has arrived! Please fill info about the current');
             }
 
             $this->api->commit();
-            $this->{$job}();
+            if ($params) {
+                $this->{$job}($params);
+            } else {
+                $this->{$job}();
+            }
 
             if (empty($this->errors)) {
                 $log['status'] = 'finished';
@@ -175,9 +191,16 @@ class SenatUpdater {
         }
     }
 
-    function updateSenatorsList() {
+    /**
+     * @param null $chamberNo Jezeli pusty to pobiera aktualną kadencję
+     */
+    function updateSenatorsList($chamberNo = null) {
+        if ($chamberNo) {
+            $chamberNo = (int) $chamberNo[0]; // unpack array
+        }
+
         $list = array();
-        foreach ($this->parser->updateSenatorsList() as $w) {
+        foreach ($this->parser->updateSenatorsList($chamberNo) as $w) {
             $list[$w['id']]['web'] = $w;
         }
         foreach ($this->api->findPeople(array('all' => true))->_items as $a) {
@@ -190,6 +213,8 @@ class SenatUpdater {
                     // add new person
                     $person = self::mapPerson($data['web']);
                     $this->api->createPerson($person);
+                } else {
+                    $this->debug("Skipping " . $data['web']['name']);
                 }
             }
         }
@@ -202,9 +227,21 @@ class SenatUpdater {
         ));
     }
 
-    function updateSenators() {
-        $cache_organizations = array();
+    /**
+     * @param null $chamberNo Jeżeli null to przetworzy aktualny chamber
+     */
+    function updateSenators($chamberNo = null) {
+        if (is_array($chamberNo)) {
+            $chamberNo = (int) $chamberNo[0]; // unpack array
+        }
+        if ($chamberNo === null) {
+            $chamberNo = $this->current_chamber_arabic;
+        }
+        if (!is_numeric($chamberNo)) {
+            throw new InvalidArgumentException("Numer kadencji powinien być liczną całkowitą.");
+        }
 
+        $cache_organizations = array();
         foreach ($this->api->find('organizations', array('all' => true))->_items as $a) {
             $cache_organizations[$a->id] = $a;
         }
@@ -213,13 +250,32 @@ class SenatUpdater {
             'all' => true,
             'where' => array(
                 'identifiers.scheme' => 'senat.gov.pl' // speakers not from Senate don't have this id
-            )
+            ),
+            'embed' => array('memberships')
         ))->_items;
+
+//        // filtruj tylko tych z wybranej kadencji - Nie działa, gdyz relacje nie są ttworzone przez updateSenatorList
+//        $chamber_id = 'chamber_' . \epforgpl\parsers\Senat::toRomainInt($chamberNo);
+//        $senators = array_filter($senators, function($s) use ($chamber_id) {
+//            foreach ($s->memberships as $membership) {
+//                if ($membership->id == $chamber_id . '-' . $s->id) {
+//                    return true;
+//                }
+//            }
+//            return false;
+//        });
 
         foreach ($senators as $a) {
             $id_senator = $a->id;
 
-            $person_data = $this->parser->updateSenatorInfo($id_senator);
+            try {
+                $person_data = $this->parser->updateSenatorInfo($id_senator, $chamberNo);
+            } catch (\epforgpl\parsers\NetworkException $e) {
+                if ($e->getCode() == 500) {
+                    $this->warn("Skipping senator " . $a->id . ' ' . $a->name . ". Most probably not part of this chamber");
+                    continue;
+                }
+            }
             $person = self::mapPersonInfo($person_data);
 
             $this->api->updatePerson($id_senator, $person);
@@ -314,10 +370,10 @@ class SenatUpdater {
                         'organization_id' => $id_group,
                     );
                     if (isset($weborg['end_date'])) {
-                        $membership_id['end_date'] = $weborg['end_date'];
+                        $membership['end_date'] = $weborg['end_date'];
                     }
                     if (isset($weborg['start_date'])) {
-                        $membership_id['start_date'] = $weborg['start_date'];
+                        $membership['start_date'] = $weborg['start_date'];
                     }
 
                     if (defined('FIRST_PASS') and !FIRST_PASS) {
@@ -361,12 +417,21 @@ class SenatUpdater {
     function updateSessionsList() {
         // cannot start when there's no people scraped yet
         if (!$this->current_chamber_has_senators) {
+            $this->warn("Current chamber $this->current_chamber doesn't have senators. Skipping it!");
             return;
+        }
+
+        if ($this->current_chamber_arabic == 8) {
+            // hack to stay consistent with previous numeration that didn't include chambers
+            // if starting DB from scratch then please delete it
+            $event_id_prefix = 'session_';
+        } else {
+            $event_id_prefix = 'session_' . $this->current_chamber . '_';
         }
 
         $list = array();
         foreach ($this->parser->updateMeetingsList() as $w) {
-            $list['session_' . $w['number']]['web'] = $w;
+            $list[$event_id_prefix . $w['number']]['web'] = $w;
         }
         $sessions = $this->api->find('events', array(
             'all' => true,
@@ -393,7 +458,7 @@ class SenatUpdater {
                     $session_name = $matches[1] . ' posiedzenie';
 
                     $event = array(
-                        'id' => 'session_' . $w['number'],
+                        'id' => $id,
                         'type' => 'session',
                         'organization_id' => $this->current_chamber,
                         'identifier' => $w['id'], // source identifier
@@ -408,7 +473,7 @@ class SenatUpdater {
                     foreach ($w['dates'] as $date) {
                         $day++;
                         $event = array(
-                            'id' => 'session_' . $w['number'] . '_' . $day,
+                            'id' => $id_session_parent . '_' . $day,
                             'parent_id' => $id_session_parent,
                             'type' => 'session',
                             'organization_id' => $this->current_chamber,
@@ -454,7 +519,7 @@ class SenatUpdater {
                 $source = $stenogram['source'];
                 $node = $stenogram['node'];
 
-                $pos = 0;
+                $speech_pos = 0;
                 $speeches = array();
                 $sittings = array();
                 $sitting_no = 0;
@@ -483,17 +548,17 @@ class SenatUpdater {
                         // close speech fragment
                         if ($speech and !empty($speech_text)) {
                             array_push($speeches, array_merge($speech, array(
-                                'id' => $id_session . '-' . $pos,
+                                'id' => $id_session . '-' . $speech_pos,
                                 'text' => $speech_text,
                                 'date' => $time,
-                                'position' => $pos,
+                                'position' => $speech_pos,
                                 'event_id' => $current_event_id,
                                 'sources' => array(array('url' => $source))
                             )));
 
                             $speech_text = '';
                             $speech = null;
-                            $pos++;
+                            $speech_pos++;
                         }
                         $close_now = false;
                     }
@@ -531,12 +596,23 @@ class SenatUpdater {
                             $speech_text = trim(substr($speech_text, $colon_pos + 1));
                             $close_now = true;
 
-                            if (((mb_strpos($text, 'Głos') !== false or mb_strpos($text, 'Glos') !== false)
-                                and mb_strpos($text, 'sali') !== false)
-                                or $text == 'Zgromadzeni odpowiadają') {
+                            if ((mb_stripos($text, 'Głos') !== false or mb_strpos($text, 'Glos') !== false)
+                                and ((mb_stripos($text, 'sali') !== false) or (mb_stripos($text, 'loży') !== false))) {
                                 $speech = array(
                                     'type' => 'speech',
-                                    'attribution_text' => 'Głos z sali'
+                                    'attribution_text' => $text
+                                );
+                                continue;
+                            }
+
+                            if ($text == 'Zgromadzeni odpowiadają'
+                                or (mb_stripos($text, 'senatorów') !== false)
+                                or (mb_stripos($text, 'senatorowie') !== false)
+                                or (mb_stripos($text, 'posłowie') !== false)
+                                or (mb_stripos($text, 'demonstrujących') !== false)) {
+                                $speech = array(
+                                    'type' => 'speech',
+                                    'attribution_text' => $text
                                 );
                                 continue;
                             }
@@ -547,6 +623,16 @@ class SenatUpdater {
 
                         if ($text == 'Senator Owczarek') {
                             $text = 'Senator Andrzej Owczarek';
+                        } else if ($text == 'Senator Rober Mamątow') {
+                            $text = 'Senator Robert Owczarek';
+                        } else if ($text == 'Senator Rulewski') {
+                            $text = 'Senator Jan Rulewski';
+                        } else if ($text == 'Senator Czerwiński') {
+                            $text = 'Senator Jerzy Czerwiński';
+                        } else if ($text == 'Podsekretarz Stanu w Ministerstwie Sprawiedliwości Warcin Warchoł') {
+                            $text = 'Podsekretarz Stanu w Ministerstwie Sprawiedliwości Marcin Warchoł';
+                        } else if ($text == 'Sekretarz Stanu w Ministerstwie Edukacji Narodowej Terasa Wargocka') {
+                            $text = 'Sekretarz Stanu w Ministerstwie Edukacji Narodowej Teresa Wargocka';
                         }
 
                         $prev_id_speaker = $id_speaker;
@@ -630,7 +716,8 @@ class SenatUpdater {
                     } else if (
                         $elemType == 'p.bodytext-P' ||
                         $elemType == 'p.pos-P' ||
-                        $elemType == 'p.oskierow-P'
+                        $elemType == 'p.oskierow-P' ||
+                        $elemType == 'p.wckom-P'
                     ) {
                         // actual speech
                         $speech_text .= ($speech_text != '' ? ' ' : '') . $text;
@@ -645,6 +732,11 @@ class SenatUpdater {
                         }
 
                         // <a href="#" class="jq-szczegoly-glosowania" rel="id_1813">Głosowanie nr 2</a>
+
+                    } else if ($elemType == 'div.stenogram-przypisy') {
+                        $speech_text = $text;
+                        $speech = array('type' => 'footnote');
+                        $close_now = true;
 
                     } else {
                         throw new ParserException("Unrecognized speech element: " . $elemType);
@@ -728,7 +820,7 @@ class SenatUpdater {
 
                             $motion2id[$webvote['motion']] = $id_motion = $motion->id;
                         }
-                    }
+                    } // if it doesn't have motion we just stick to having vote_event without connected motion
 
                     $vote_event = array(
                         'id' => $id_vote_event,
@@ -901,7 +993,7 @@ class SenatUpdater {
     }
 
     private function today() {
-        $date = new DateTime();
+        $date = new DateTime(null, new DateTimeZone("Europe/Warsaw"));
         return $date->format('Y-m-d');
     }
 
@@ -914,6 +1006,7 @@ class SenatUpdater {
         }
 
         $this->current_chamber = 'chamber_' . $terms[0]['id'];
+        $this->current_chamber_arabic = \epforgpl\parsers\Senat::parseRomanInt($terms[0]['id']);
 
         if (has_key($this->chambers, $this->current_chamber)) {
             foreach($this->chambers[$this->current_chamber]->sources as $s) {
@@ -928,7 +1021,7 @@ class SenatUpdater {
             $chamber_id = 'chamber_' . $term['id'];
 
             if (!has_key($this->chambers, $chamber_id)
-                or (isset($term['end_date']) and $this->chambers[$chamber_id]->dissolution_date != $term['end_date'])
+                or (isset($term['end_date']) and (empty($this->chambers[$chamber_id]->dissolution_date) or $this->chambers[$chamber_id]->dissolution_date != $term['end_date']))
             ) {
 
                 $org = array(
@@ -936,7 +1029,7 @@ class SenatUpdater {
                     'name' => 'Kadencja ' . $term['id'],
                     'classification' => 'chamber',
                     'founding_date' => $term['start_date'],
-                    'sources' => array(array(
+                    'sources' => array((object) array(
                         'note' => 'chamber',
                         'url' => $term['source']
                     ))
@@ -945,7 +1038,12 @@ class SenatUpdater {
                     $org['dissolution_date'] = $term['end_date'];
                 }
 
-                $this->api->createOrganization($org);
+                if (!has_key($this->chambers, $chamber_id)) {
+                    $this->api->createOrganization($org);
+                } else {
+                    $this->api->updateOrganization($org);
+                }
+
                 $this->chambers[$chamber_id] = (object) $org;
             }
         }

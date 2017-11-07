@@ -17,15 +17,16 @@ class ApiException extends \Exception {
 
 class ValidationException extends ApiException {
     public function __construct($result) {
-        parent::__construct($result);
+        parent::__construct($method, $url, $result);
 
+        $pre = "[$method] $url returned validation errors: ";
         if (isset($result->_issues)) {
             $this->issues = $result->_issues;
-            $this->message = "Validation errors: " . json_encode($this->issues);
+            $this->message = $pre . json_encode($this->issues);
 
         } else {
             $this->items = $result->_items;
-            $this->message = "Validation errors: " . json_encode($this->items);
+            $this->message = $pre . json_encode($this->items);
         }
     }
 }
@@ -69,33 +70,44 @@ class API {
         }
 
         if (!is_array_assoc($data)) {
+            // creating multiple instances
+
             $this->debug("[CREATE] " . $type);
             foreach($data as $datum) {
                 $this->debug("\t" . json_encode($datum));
             };
 
-            $ids = $id = $this->_post($this->endpoint . $type, $data);
-            if (!is_array($id)) {
-                $ids = $id = array($id);
+            $ids = $this->_post($this->endpoint . $type, $data);
+            if (!is_array($ids)) {
+                $ids = array($ids);
             }
 
+            // save changes
+            foreach($ids as $id) {
+                if ($type != 'logs') {
+                    array_push($this->changes, array(
+                        'op' => 'CREATE',
+                        'type' => $type,
+                        'id' => $id
+                    ));
+                }
+            }
+
+            return $ids;
         } else {
             $this->debug("[CREATE] " . $type . " " . json_encode($data));
 
             $id = $this->_post($this->endpoint . $type, $data);
-            $ids = array($id);
-        }
+            if ($type != 'logs') {
+                array_push($this->changes, array(
+                    'op' => 'CREATE',
+                    'type' => $type,
+                    'id' => $id
+                ));
+            }
 
-        // save changes
-        foreach($ids as $i) {
-            array_push($this->changes, array(
-                'op' => 'CREATE',
-                'type' => $type,
-                'id' => $i
-            ));
+            return $id;
         }
-
-        return $id;
     }
 
     public function get($type, $id, $options = array()) {
@@ -186,6 +198,10 @@ class API {
         return $this->create('organizations', $org);
     }
 
+    public function updateOrganization($id, $organization, $replaceObject = false) {
+        $this->update('organizations', $id, $organization, $replaceObject);
+    }
+
     public function getOrganization($id, $options = array()) {
         return $this->get('organizations', $id, $options);
     }
@@ -233,11 +249,12 @@ class API {
 
         $ch = curl_init();
         curl_setopt_array($ch, $options);
-        if (($result = curl_exec($ch)) === false) {
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if (($result = curl_exec($ch)) === false || $http_code >= 300) {
             $curl_error = curl_error($ch);
             curl_close($ch);
 
-            error_log("[POST " . $url . "] " . json_encode($data));
+            error_log("[$method " . $url . "] " . json_encode($data));
             throw new NetworkException($curl_error);
         }
         curl_close($ch);
@@ -247,7 +264,7 @@ class API {
 
         if ($result != null and $result->_status == 'ERR') {
             if (isset($result->_issues) || isset($result->_items)) {
-                throw new ValidationException($result);
+                throw new ValidationException($method, $url, $result);
 
             } else {
                 throw new ApiException($result, " while $method $url");
