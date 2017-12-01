@@ -136,10 +136,10 @@ class API {
         unset($data_old['_links']);
 
         $new_data = array_diff_assocr($data, $data_old);
-        $deleted_data = array_diff_assocr($data_old, $data);
+        $missing_data = array_diff_assocr($data_old, $data); // won't be deleted because we are patching
 
-        if ($new_data or $deleted_data) {
-            $this->debug("[UPDATE] changing data $type " . $data['id'] . ": NEW " . json_encode($new_data) . "; DELETED: " . json_encode($deleted_data));
+        if ($new_data) {
+            $this->debug("[UPDATE] changing data $type " . $data['id'] . ": NEW " . json_encode($new_data) . "; MISSING: " . json_encode($missing_data));
             $this->update($type, $id, $data);
         } else {
             $this->debug("[UPDATE] skipping $type " . $data['id'] . " as no changes has been detected.");
@@ -147,6 +147,17 @@ class API {
     }
 
     public function createOrUpdate($type, $data) {
+        $this->createOr('update', $type, $data);
+    }
+    public function createOrSkip($type, $data) {
+        $this->createOr('skip', $type, $data);
+    }
+
+    protected function createOr($or_what, $type, $data) {
+        if ($or_what != 'update' and $or_what != 'skip') {
+            throw new \InvalidArgumentException("First param should be 'update' or 'skip'.");
+        }
+
         if (is_array_assoc($data)) {
             // individual object
             try {
@@ -155,7 +166,9 @@ class API {
                 return $this->create($type, $data);
             }
 
-            updateIfNeeded($type, $data['id'], $data, $obj);
+            if ($or_what == 'update') {
+                updateIfNeeded($type, $data['id'], $data, $obj);
+            }
 
             return;
         }
@@ -179,7 +192,9 @@ class API {
         $to_create = array();
         foreach($data as $o) {
             if (isset($existing[$o['id']])) {
-                $this->updateIfNeeded($type, $o['id'], $o, $existing[$o['id']]);
+                if ($or_what == 'update') {
+                    $this->updateIfNeeded($type, $o['id'], $o, $existing[$o['id']]);
+                }
             } else {
                 array_push($to_create, $o);
             }

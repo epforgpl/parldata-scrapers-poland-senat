@@ -183,7 +183,16 @@ class SenatUpdater {
         } catch (Exception $ex) {
             $this->api->rollback();
 
-            $log['params']['errors'] = array($ex->getMessage());
+            if ($ex instanceof \parldata\ValidationException) {
+                $errors = array_map(function ($err) {return json_encode($err->_issues);}, $ex->items);
+                array_unshift($errors, $ex->result->_error->message);
+
+                $log['params']['errors'] = $errors;
+
+            } else {
+                $log['params']['errors'] = array($ex->getMessage());
+            }
+
             $log['status'] = 'failed';
             $this->api->createLog($log);
 
@@ -846,7 +855,7 @@ class SenatUpdater {
                 }
 
                 if (!empty($vote_events)) {
-                    $this->api->create('vote-events', $vote_events);
+                    $this->api->createOrSkip('vote-events', $vote_events);
                 }
 
                 $this->api->update('events', $id_session, array(
