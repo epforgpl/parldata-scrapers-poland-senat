@@ -550,15 +550,21 @@ class SenatUpdater {
                 $time = $session->start_date; // TODO update with time
                 $close_now = false;
 
-                foreach ($node->children() as $line) {
-                    $text = trim($line->plaintext);
-                    if (empty($text)) {
-                        continue;
-                    }
+                for($line_no = 0; $line_no <= count($node->children()); $line_no++) {
+                    $last_line = $line_no == count($node->children());
+                    if (!$last_line) {
+                        $line = $node->children($line_no);
+                        $text = trim($line->plaintext);
+                        if (empty($text)) {
+                            continue;
+                        }
 
-                    $matches = array();
-                    $elemType = $line->tag . '.' . $line->class;
-                    $text_in_parentheses = preg_match('/^\\(([^\\)]*)\\)?$/', $text, $matches);
+                        $matches = array();
+                        $elemType = $line->tag . '.' . $line->class;
+                        $text_in_parentheses = preg_match('/^\\(([^\\)]*)\\)?$/', $text, $matches);
+                    } else {
+                        $close_now = True;
+                    }
 
                     if ($close_now
                         or in_array($elemType, array('p.centr-P', 'p.haslo-P', 'h3.'))
@@ -581,10 +587,15 @@ class SenatUpdater {
                         }
                         $close_now = false;
                     }
+
+                    if ($last_line) {
+                        break; // that's enough!
+                    }
+
                     $current_event_id = $new_sitting_id;
 
                     if ($elemType == 'p.centr-P') {
-                        if (!preg_match('/^\\((.*)\\)?$/', $text, $matches)) {
+                        if (!preg_match('/^\\(([^\\)]*)\\)?$/', $text, $matches)) {
                             throw new ParserException("Was expecting parentheses around [.centr-P]: " . $text);
                         }
                         $speech_text = trim($matches[1]);
