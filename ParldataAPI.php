@@ -136,10 +136,10 @@ class API {
         unset($data_old['_links']);
 
         $new_data = array_diff_assocr($data, $data_old);
-        $missing_data = array_diff_assocr($data_old, $data); // won't be deleted because we are patching
+        $previous_data = array_diff_assocr($data_old, $data); // won't be deleted because we are patching
 
         if ($new_data) {
-            $this->debug("[UPDATE] changing data $type " . $data['id'] . ": NEW " . json_encode($new_data) . "; MISSING: " . json_encode($missing_data));
+            $this->debug("[UPDATE] changing data $type " . $data['id'] . ": NEW " . json_encode($new_data) . "; PREVIOUS: " . json_encode($previous_data));
             $this->update($type, $id, $data);
         } else {
             $this->debug("[UPDATE] skipping $type " . $data['id'] . " as no changes has been detected.");

@@ -503,17 +503,26 @@ class SenatUpdater {
     /**
      * Fills all info about bunch of sessions
      */
-    function updateSessions() {
+    function updateSessions($session_id = null) {
         $batch = 20;
 
+        $where = array(
+            'type' => 'session',
+            'sources' => array(
+                '$exists' => false
+            )
+        );
+        if ($session_id) {
+            if (is_array($session_id)) {
+                $session_id = $session_id[0]; // unpack array
+            }
+            // process given session
+            $where['id'] = $session_id;
+            unset($where['sources']);
+        }
         $sessions = $this->api->find('events', array(
             'max_results' => min($batch, 50),
-            'where' => array(
-                'type' => 'session',
-                'sources' => array(
-                    '$exists' => false
-                )
-            )
+            'where' => $where
         ));
 
         $name2id = array();
@@ -536,6 +545,7 @@ class SenatUpdater {
 
                 $speech = null;
                 $id_speaker = null;
+                $attribution_text = null;
                 $speech_text = '';
                 $time = $session->start_date; // TODO update with time
                 $close_now = false;
@@ -591,12 +601,11 @@ class SenatUpdater {
                         if ($text_in_parentheses) {
                             $speech_text = trim($matches[1]);
 
-                            // (Rozmowy na sali)
+                            // Brak dwukropka, czyli nikt konkretny nie mówi -> type=scene, np. (Rozmowy na sali)
                             if (($colon_pos = strpos($speech_text, ':')) === false) {
                                 $speech = array('type' => 'scene');
                                 $close_now = true;
                                 continue;
-
                             }
 
                             // (Głos z sali: Więcej rąk niż odcinków dróg.)
@@ -605,6 +614,7 @@ class SenatUpdater {
                             $speech_text = trim(substr($speech_text, $colon_pos + 1));
                             $close_now = true;
 
+                            // nie udało się ustalić mówiącego
                             if ((mb_stripos($text, 'Głos') !== false or mb_strpos($text, 'Glos') !== false)
                                 and ((mb_stripos($text, 'sali') !== false) or (mb_stripos($text, 'loży') !== false))) {
                                 $speech = array(
@@ -614,6 +624,7 @@ class SenatUpdater {
                                 continue;
                             }
 
+                            // bohater zbiorowy
                             if ($text == 'Zgromadzeni odpowiadają'
                                 or (mb_stripos($text, 'senatorów') !== false)
                                 or (mb_stripos($text, 'senatorowie') !== false)
@@ -625,64 +636,17 @@ class SenatUpdater {
                                 );
                                 continue;
                             }
+
+                            // to jest wtręt, więc zapamiętujemy poprzedniego prezentującego
+                            $prev_id_speaker = $id_speaker;
+                            $id_speaker = null;
+                            $prev_attribution_text = $attribution_text;
+                            $attribution_text = null;
                         }
 
-                        // speaker definition
+                        // Kto mówi obecnie?
                         $text = trim(trim($text), ':');
-
-                        if ($text == 'Senator Owczarek') {
-                            $text = 'Senator Andrzej Owczarek';
-                        } else if ($text == 'Senator Rober Mamątow') {
-                            $text = 'Senator Robert Owczarek';
-                        } else if ($text == 'Senator Rulewski') {
-                            $text = 'Senator Jan Rulewski';
-                        } else if ($text == 'Senator Czerwiński') {
-                            $text = 'Senator Jerzy Czerwiński';
-                        } else if ($text == 'Podsekretarz Stanu w Ministerstwie Sprawiedliwości Warcin Warchoł') {
-                            $text = 'Podsekretarz Stanu w Ministerstwie Sprawiedliwości Marcin Warchoł';
-                        } else if ($text == 'Sekretarz Stanu w Ministerstwie Edukacji Narodowej Terasa Wargocka') {
-                            $text = 'Sekretarz Stanu w Ministerstwie Edukacji Narodowej Teresa Wargocka';
-                        }
-
-                        $prev_id_speaker = $id_speaker;
-                        $id_speaker = null;
-                        foreach ($name2id as $_name => $_id) {
-                            if (endsWith($text, $_name)) {
-                                $id_speaker = $_id;
-                                break;
-                            }
-                        }
-
-                        try {
-                            $name_idx = $this->parser->findIndexOfName($text);
-
-                        } catch (ParserException $ex) {
-                            // that's an exception!
-                            if ($text == 'Wicemarszałek Pańczyk-Pozdziej') {
-                                $person = array(
-                                    'name' => 'Pańczyk-Pozdziej',
-                                    'family_name' => 'Pańczyk-Pozdziej',
-                                    'summary' => $attribution_text = 'Wicemarszałek'
-                                );
-
-                                $id_speaker = $this->api->createPerson($person);
-                                $name2id[$person['name']] = $id_speaker;
-                                $name_idx = 14;
-
-                            } else {
-                                throw $ex;
-                            }
-                        }
-
-                        $attribution_text = trim(substr($text, 0, $name_idx));
-
-                        if ($id_speaker == null) {
-                            $person = $this->parser->parseFullName(trim(substr($text, $name_idx)));
-                            $person['summary'] = $attribution_text;
-
-                            $id_speaker = $this->api->createPerson($person);
-                            $name2id[$person['name']] = $id_speaker;
-                        }
+                        list($id_speaker, $attribution_text) = $this->getOrCreatePerson($text, $name2id);
 
                         $speech = array(
                             'type' => 'speech',
@@ -693,6 +657,7 @@ class SenatUpdater {
                         if ($text_in_parentheses) {
                             // go back to who was speaking before interrupted
                             $id_speaker = $prev_id_speaker;
+                            $attribution_text = $prev_attribution_text;
                         }
 
                     } else if ($elemType == 'h1.stenogram-ukryj-naglowek') {
@@ -995,6 +960,70 @@ class SenatUpdater {
 
     private function warn($msg) {
         error_log("[WARNING] " . $msg);
+    }
+
+    /**
+     * @param $name_with_attribution
+     * @param $name2id
+     * @return array($id_speaker, $attribution_text);
+     * @throws ParserException
+     */
+    protected function getOrCreatePerson($name_with_attribution, $name2id)
+    {
+        // wyjątki dla przejęzyczeń
+        if ($name_with_attribution == 'Senator Owczarek') {
+            $name_with_attribution = 'Senator Andrzej Owczarek';
+        } else if ($name_with_attribution == 'Senator Rober Mamątow') {
+            $name_with_attribution = 'Senator Robert Owczarek';
+        } else if ($name_with_attribution == 'Senator Rulewski') {
+            $name_with_attribution = 'Senator Jan Rulewski';
+        } else if ($name_with_attribution == 'Senator Czerwiński') {
+            $name_with_attribution = 'Senator Jerzy Czerwiński';
+        } else if ($name_with_attribution == 'Podsekretarz Stanu w Ministerstwie Sprawiedliwości Warcin Warchoł') {
+            $name_with_attribution = 'Podsekretarz Stanu w Ministerstwie Sprawiedliwości Marcin Warchoł';
+        } else if ($name_with_attribution == 'Sekretarz Stanu w Ministerstwie Edukacji Narodowej Terasa Wargocka') {
+            $name_with_attribution = 'Sekretarz Stanu w Ministerstwie Edukacji Narodowej Teresa Wargocka';
+        }
+
+        foreach ($name2id as $_name => $_id) {
+            if (endsWith($name_with_attribution, $_name)) {
+                $id_speaker = $_id;
+                break;
+            }
+        }
+
+        try {
+            $name_idx = $this->parser->findIndexOfName($name_with_attribution);
+
+        } catch (ParserException $ex) {
+            // that's an exception!
+            if ($name_with_attribution == 'Wicemarszałek Pańczyk-Pozdziej') {
+                $person = array(
+                    'name' => 'Pańczyk-Pozdziej',
+                    'family_name' => 'Pańczyk-Pozdziej',
+                    'summary' => $attribution_text = 'Wicemarszałek'
+                );
+
+                $id_speaker = $this->api->createPerson($person);
+                $name2id[$person['name']] = $id_speaker;
+                $name_idx = 14;
+
+            } else {
+                throw $ex;
+            }
+        }
+
+        $attribution_text = trim(substr($name_with_attribution, 0, $name_idx));
+
+        if ($id_speaker == null) {
+            $person = $this->parser->parseFullName(trim(substr($name_with_attribution, $name_idx)));
+            $person['summary'] = $attribution_text;
+
+            $id_speaker = $this->api->createPerson($person);
+            $name2id[$person['name']] = $id_speaker;
+        }
+
+        return array($id_speaker, $attribution_text);
     }
 
     private function senator_url($id) {
