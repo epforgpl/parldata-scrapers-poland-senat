@@ -940,7 +940,7 @@ class SenatUpdater {
                 }
 
                 if (!empty($votes)) {
-                    $this->api->create('votes', $votes);
+                    $this->api->createOrUpdate('votes', $votes);
                 }
 
                 $this->api->update('vote-events', $id_vote_event, array(
